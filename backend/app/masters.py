@@ -52,6 +52,10 @@ MASTERS: dict[str, Master] = {m.type: m for m in [
     Master("account", "Account Description", DESC, re.compile(r"^\s*account\s*desc", re.I),
            [col("code", "Account Number", "account", "account no", "gl account"),
             col("description", "Account Description", "account desc", "description")], keyed=True),
+    # Learned from the finished report: every row carries Account and its P&L Group.
+    Master("pl_group", "P&L Group", DESC, re.compile(r"department\w*\s*expense\s*report", re.I),
+           [col("code", "Account", "account number", "account no", "gl account"),
+            col("description", "P&L Group", "pl group", "p and l group")], keyed=True),
 
     Master("d1_fixed", "D1 Fixed Expenses based Account", D1, re.compile(r"D1\s*Fixed", re.I),
            [col("account", "Account", "account number"),

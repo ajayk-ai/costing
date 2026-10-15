@@ -119,8 +119,16 @@ def all_rows(m: Master) -> list[dict]:
         f"SELECT data FROM master_rows WHERE type = ? {_order_by(m)}", (m.type,))]
 
 
-def logs(m: Master):
-    return [dict(r) for r in _conn.execute("SELECT * FROM upload_log WHERE type = ? ORDER BY id DESC LIMIT 10", (m.type,))]
+def logs(m: Master, limit: int = 200):
+    return [dict(r) for r in _conn.execute("SELECT * FROM upload_log WHERE type = ? ORDER BY id DESC LIMIT ?", (m.type, limit))]
+
+
+def delete_logs(m: Master, log_id: int | None = None) -> int:
+    """Delete one upload-history entry, or all of this master's when log_id is None. Master rows are untouched."""
+    with tx() as c:
+        if log_id is None:
+            return c.execute("DELETE FROM upload_log WHERE type = ?", (m.type,)).rowcount
+        return c.execute("DELETE FROM upload_log WHERE type = ? AND id = ?", (m.type, log_id)).rowcount
 
 
 # ---------- single-row writes ----------
@@ -229,7 +237,16 @@ def add_run(file_name: str, summary: dict, preview: dict, output: str) -> int:
                           json.dumps(summary), json.dumps(preview), output)).lastrowid
 
 
-def list_runs(limit: int = 20):
+def delete_runs(run_id: int | None = None) -> list[str]:
+    """Delete one run, or all when run_id is None. Returns the output file names to remove."""
+    with tx() as c:
+        where, args = ("", ()) if run_id is None else (" WHERE id = ?", (run_id,))
+        outputs = [r["output"] for r in c.execute(f"SELECT output FROM sap_runs{where}", args)]
+        c.execute(f"DELETE FROM sap_runs{where}", args)
+    return outputs
+
+
+def list_runs(limit: int = 200):
     return [dict(r) for r in _conn.execute(
         "SELECT id, file_name, rows, filled, unfilled, created_at FROM sap_runs ORDER BY id DESC LIMIT ?", (limit,))]
 

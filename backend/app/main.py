@@ -1,7 +1,7 @@
 """Costing master data API (FastAPI).
 
 Run from the project root:  uv run backend/run.py   (settings come from .env)
-If FRONTEND_DIST exists (npm run build), the React app is served at / as well.
+The built React app in FRONTEND_DIST (backend/static) is served at / as well.
 """
 from datetime import date, datetime
 
@@ -149,6 +149,18 @@ def logs(t: str):
     return db.logs(master_or_404(t))
 
 
+@app.delete("/api/masters/{t}/logs")
+def clear_logs(t: str):
+    return {"deleted": db.delete_logs(master_or_404(t))}
+
+
+@app.delete("/api/masters/{t}/logs/{log_id}")
+def delete_log(t: str, log_id: int):
+    if not db.delete_logs(master_or_404(t), log_id):
+        raise HTTPException(404, "History entry not found")
+    return {"deleted": 1}
+
+
 # ---------- SAP data processing ----------
 
 def _process_sap(data: bytes, file_name: str) -> int:
@@ -184,6 +196,29 @@ def sap_run(run_id: int):
     return r
 
 
+def _remove_outputs(names: list[str]):
+    for n in names:
+        f = RUNS_DIR / n
+        if f.parent == RUNS_DIR and f.is_file():
+            f.unlink()
+
+
+@app.delete("/api/sap/runs")
+def clear_sap_runs():
+    names = db.delete_runs()
+    _remove_outputs(names)
+    return {"deleted": len(names)}
+
+
+@app.delete("/api/sap/runs/{run_id}")
+def delete_sap_run(run_id: int):
+    names = db.delete_runs(run_id)
+    if not names:
+        raise HTTPException(404, "Run not found")
+    _remove_outputs(names)
+    return {"deleted": 1}
+
+
 @app.get("/api/sap/runs/{run_id}/download")
 def sap_download(run_id: int):
     r = db.get_run(run_id)
@@ -193,7 +228,7 @@ def sap_download(run_id: int):
     return FileResponse(f, media_type=XLSX_MIME, filename=r["output"])
 
 
-# Serve the built React app (frontend/dist) when present.
+# Serve the built React app (backend/static) when present.
 DIST = FRONTEND_DIST
 if (DIST / "index.html").exists():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")

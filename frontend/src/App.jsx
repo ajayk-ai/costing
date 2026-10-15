@@ -1,16 +1,26 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api, fmt } from './api.js';
-import MasterView from './components/MasterView.jsx';
-import SapView from './components/SapView.jsx';
-import UploadDialog from './components/UploadDialog.jsx';
+import { api } from './api.js';
+import Topbar from './layout/Topbar.jsx';
+import Sidebar from './layout/Sidebar.jsx';
+import SapMappingPage from './pages/sap/SapMappingPage.jsx';
+import MasterPage from './pages/masters/MasterPage.jsx';
+import UploadDialog from './pages/masters/UploadDialog.jsx';
+import Alert from './ui/Alert.jsx';
+import { ToastProvider } from './ui/Toast.jsx';
 
-const SAP = 'sap'; // the SAP Data Mapping page; every other value is a master type
-const initialView = () => location.hash.slice(1) || SAP;
+const SAP = 'sap'; // the SAP Data Mapping page; every other view is a master type
+// URL hash: #<view>/<tab>, e.g. #sap/history or #pl_group/upload
+const initialRoute = () => {
+  const [view, tab] = location.hash.slice(1).split('/');
+  return { view: view || SAP, tab: tab || '' };
+};
 
 export default function App() {
   const [masters, setMasters] = useState([]);
-  const [view, setView] = useState(initialView);
+  const [route, setRoute] = useState(initialRoute);
+  const { view, tab } = route;
   const [error, setError] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false);
   const [workbookOpen, setWorkbookOpen] = useState(false);
   const [version, setVersion] = useState(0); // bumps after any change so views reload
 
@@ -18,66 +28,36 @@ export default function App() {
     try {
       const list = await api.masters();
       setMasters(list);
-      setView((v) => (v === SAP || list.some((m) => m.type === v) ? v : SAP));
+      setRoute((r) => (r.view === SAP || list.some((m) => m.type === r.view) ? r : { view: SAP, tab: '' }));
       setError('');
     } catch (e) {
-      setError(`Cannot reach the API: ${e.message}. Is the backend running?`);
+      setError(`Cannot reach the server: ${e.message}. Is the backend running?`);
     }
   }, []);
 
   useEffect(() => { loadMasters(); }, [loadMasters]);
-  useEffect(() => { history.replaceState(null, '', `#${view}`); }, [view]);
+  useEffect(() => { history.replaceState(null, '', `#${view}${tab ? `/${tab}` : ''}`); }, [view, tab]);
+  useEffect(() => { window.scrollTo(0, 0); }, [view]);
 
+  const navigate = (v) => { setRoute({ view: v, tab: '' }); setMenuOpen(false); };
+  const setTab = (t) => setRoute((r) => ({ ...r, tab: t }));
   const changed = () => { loadMasters(); setVersion((v) => v + 1); };
-  const groups = [...new Set(masters.map((m) => m.group))];
   const master = masters.find((m) => m.type === view);
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">Costing <span>Master Data</span></div>
-        <button className="btn on-dark" onClick={() => setWorkbookOpen(true)} title="Upload the whole expense report; every master tab found in it is updated">
-          Upload full workbook
-        </button>
-      </header>
-
-      <div className="layout">
-        <nav className="sidebar" aria-label="Navigation">
-          <select className="mobile-picker" value={view} onChange={(e) => setView(e.target.value)}>
-            <optgroup label="Processing"><option value={SAP}>SAP Data Mapping</option></optgroup>
-            {groups.map((g) => (
-              <optgroup key={g} label={g}>
-                {masters.filter((m) => m.group === g).map((m) => <option key={m.type} value={m.type}>{m.label} ({fmt(m.count)})</option>)}
-              </optgroup>
-            ))}
-          </select>
-          <div className="nav-group">
-            <div className="nav-title">Processing</div>
-            <button className="nav-item" aria-current={view === SAP ? 'page' : undefined} onClick={() => setView(SAP)}>
-              <span>SAP Data Mapping</span>
-            </button>
-          </div>
-          {groups.map((g) => (
-            <div className="nav-group" key={g}>
-              <div className="nav-title">{g}</div>
-              {masters.filter((m) => m.group === g).map((m) => (
-                <button key={m.type} className="nav-item" aria-current={m.type === view ? 'page' : undefined} onClick={() => setView(m.type)}>
-                  <span>{m.label}</span>
-                  <span className={`badge${m.count ? '' : ' zero'}`}>{fmt(m.count)}</span>
-                </button>
-              ))}
-            </div>
-          ))}
-        </nav>
-
-        <main className="content">
-          {error && <div className="banner error">{error}</div>}
-          {view === SAP && <SapView onOpenMaster={setView} />}
-          {master && <MasterView key={master.type} master={master} version={version} onChanged={changed} />}
-        </main>
+    <ToastProvider>
+      <div className="app">
+        <Topbar onMenu={() => setMenuOpen(true)} onUploadWorkbook={() => setWorkbookOpen(true)} />
+        <div className="layout">
+          <Sidebar masters={masters} view={view} sapView={SAP} onNavigate={navigate} open={menuOpen} onClose={() => setMenuOpen(false)} />
+          <main className="content">
+            {error && <Alert tone="error" title="Connection problem">{error}</Alert>}
+            {view === SAP && <SapMappingPage tab={tab || 'upload'} onTab={setTab} onOpenMaster={navigate} />}
+            {master && <MasterPage key={master.type} master={master} tab={tab || 'records'} onTab={setTab} version={version} onChanged={changed} />}
+          </main>
+        </div>
+        {workbookOpen && <UploadDialog onClose={() => setWorkbookOpen(false)} onDone={changed} />}
       </div>
-
-      {workbookOpen && <UploadDialog workbook onClose={() => setWorkbookOpen(false)} onDone={changed} />}
-    </div>
+    </ToastProvider>
   );
 }

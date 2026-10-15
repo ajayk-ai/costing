@@ -70,8 +70,12 @@ def _rows_from_grid(grid: list[list[str]], master: Master, columns: list[Column]
     return columns, rows
 
 
+EXCEL_ERRORS = {"#N/A", "#REF!", "#VALUE!", "#DIV/0!", "#NAME?", "#NUM!", "#NULL!"}
+
+
 def _read_sheet(ws) -> list[list[str]]:
-    return [[cell_text(v) for v in row] for row in ws.iter_rows(values_only=True)]
+    """Master sheets as text. Formula errors such as #N/A are read as blank cells."""
+    return [["" if t in EXCEL_ERRORS else t for t in map(cell_text, row)] for row in ws.iter_rows(values_only=True)]
 
 
 def _open(data: bytes):

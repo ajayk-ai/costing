@@ -9,6 +9,9 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react()],
     envDir: '..',
+    // Built into the backend so the FastAPI server serves it; committed, so other
+    // machines need only uv (no Node) to run the app.
+    build: { outDir: '../backend/static', emptyOutDir: true },
     server: {
       port: Number(env.VITE_DEV_PORT || 5173),
       proxy: { '/api': `http://localhost:${apiPort}` },

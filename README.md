@@ -9,7 +9,7 @@ Web app for the master data behind the Departmentwise Expense Report.
 
 | Group | Master | Kind |
 |---|---|---|
-| Description Masters | Material, Offsetting, Order (IO), Cost Center, Account Description | one row per code |
+| Description Masters | Material, Offsetting, Order (IO), Cost Center, Account Description, P&L Group (by Account, loaded from the "Departmentwise Expense report" tab) | one row per code |
 | D1 Department Mapping | Fixed Expenses based Account, Salary based on Order, Wages based on Cost Center, Consulting based on Offsetting Account, Consumable, Field Employees, ESI & PF, Emp ID | mapping table: the same code can appear more than once, exact duplicate rows are dropped |
 
 The ESI & PF tab in the workbook is empty, so this master has no fixed columns. The header row of the first file uploaded to it sets them.
@@ -22,6 +22,17 @@ start.bat
 
 That opens the app in the browser (http://localhost:8000 by default) and serves the built React app from the API. It is the same as `uv run backend/run.py --open`.
 
+### Deploying to another machine
+
+The built frontend is committed in `backend/static/`, so the other machine needs only [uv](https://docs.astral.sh/uv/getting-started/installation/), not Node.js:
+
+```
+git clone <repo> costing && cd costing
+start.bat                              # first run creates .env and .venv, then opens the browser
+```
+
+Set `APP_HOST=0.0.0.0` in `.env` to let other PCs on the network open `http://<this-pc>:8000`. The database (`backend/data/`) and the Excel workbooks are not in git: copy `backend/data/costing.db` across, or upload the workbook in the app (**Upload full workbook**) or run `uv run backend/seed.py <file.xlsx>`.
+
 ## Configuration (.env)
 
 All settings live in `.env` in the project root. `.env` is not committed: copy `.env.example` to `.env` and edit it (`start.bat` does this automatically the first time). Relative paths are resolved from the project root. A real environment variable with the same name overrides `.env`.
@@ -33,14 +44,14 @@ All settings live in `.env` in the project root. `.env` is not committed: copy `
 | `APP_RELOAD` | `false` | `true` restarts the server when backend code changes (development) |
 | `DB_PATH` | `backend/data/costing.db` | SQLite database file |
 | `SEED_WORKBOOK` | `Departmnetwise Expense Report 2026-27 (2).xlsx` | workbook loaded by `seed.py` when no path is given |
-| `FRONTEND_DIST` | `frontend/dist` | built React app served at `/` |
+| `FRONTEND_DIST` | `backend/static` | built React app served at `/` |
 | `VITE_DEV_PORT` | `5173` | port for `npm run dev` |
 | `MAX_UPLOAD_MB` | `100` | largest Excel upload accepted |
 | `CORS_ORIGINS` | *(empty)* | comma-separated origins allowed to call the API from another host |
 
 ### First-time setup (already done on this machine)
 
-Requires [uv](https://docs.astral.sh/uv/getting-started/installation/) and Node.js 18+.
+Requires [uv](https://docs.astral.sh/uv/getting-started/installation/). Node.js 18+ is needed only to change the frontend.
 
 ```
 # install uv (once per machine)
@@ -50,9 +61,6 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 copy .env.example .env                 # then edit paths/ports if needed
 uv sync                                # creates .venv here (project root) with the Python in .python-version and the locked packages
 uv run backend/seed.py                 # load masters from SEED_WORKBOOK
-cd frontend
-npm install
-npm run build
 ```
 
 `uv run backend/seed.py <file.xlsx>` loads a different workbook; add `--replace` to wipe each master found first.
@@ -67,7 +75,12 @@ costing/
   uv.lock             pinned versions
   .python-version
   backend/            FastAPI app (app/, settings in app/config.py), run.py, seed.py, data/costing.db
-  frontend/           React app (src/), built into dist/
+                      static/  built React app (committed, served at /)
+  frontend/           React app source; npm run build writes to backend/static/
+    src/ui/           reusable components: Button, Card, Modal, Tabs, FileDrop, Pagination, Alert, Toast, ...
+    src/layout/       Topbar and Sidebar (a drawer on phones)
+    src/pages/sap/    SAP Data Mapping page: upload, previous runs, result tabs
+    src/pages/masters/  master page: table, search, edit/upload dialogs, upload history
 ```
 
 ### Backend dependencies
@@ -88,7 +101,7 @@ uv run backend/run.py                  # from the project root; set APP_RELOAD=t
 cd frontend && npm run dev
 ```
 
-The second command runs Vite on `VITE_DEV_PORT` (5173) and forwards `/api` to `APP_PORT`. Run `npm run build` again afterwards so port 8000 serves the new version.
+The second command runs Vite on `VITE_DEV_PORT` (5173) and forwards `/api` to `APP_PORT`. When done, run `npm install` (once) and `npm run build` in `frontend/`, then commit `backend/static/` so port 8000 and other machines get the new version.
 
 ## SAP Data Mapping
 
@@ -101,11 +114,17 @@ Columns added (orange in the output file):
 | Month | from **Year/month**, which holds the fiscal period: period 1 = April … 12 = March |
 | Offst.acct Desc | Offsetting Description master, by **Offst.acct** |
 | Account Description | Account Description master, by **Account** |
+| P&L Group | P&L Group master, by **Account** |
 | CC Description | Cost Center Description master, by **Cost Ctr** |
 | Order Desc | Order Description master, by **Order** |
 | Material desc | Material Description master, by **Material** |
 | Department | D1 rules below, in order |
-| Department Source | which D1 rule filled the row (for checking) |
+
+The result has exactly the 25 columns of the **REDIFINED DATA** sheet, in the same order (`LAYOUT` in `backend/app/sap.py`). Other SAP columns (Vendor, Clrng doc., Bline Date, Ref.key (header) 1, Reference, Reference Key 3) are left out. Which D1 rule filled each row is shown in the app's summary, not in the file.
+
+The P&L Group master was built from the existing "Departmentwise Expense report" tab, where each Account has one P&L Group. For an account missing from it, add the row in **P&L Group** (or upload the report again).
+
+Date columns (Doc. Date, Pstng Date) are written as real dates shown `dd-mm-yyyy` with no time. In the SAP export, dates with a day of 12 or less are often stored with day and month swapped (12-10-2026 becomes 10 Dec), while later days stay as text. When a column shows that pattern, the swap is reversed. Year/month is shown `yyyy/mm`.
 
 Department rules. Each step only fills rows still blank after the steps above it:
 

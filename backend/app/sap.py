@@ -7,6 +7,7 @@
      Order -> Order Desc, Material -> Material desc.
 4. Fill Department by the D1 rules in RULES order. A row is filled by the first rule that
    matches; later rules only see rows that are still blank.
+5. Write the columns in LAYOUT order (the REDIFINED DATA sheet), dates as dd-mm-yyyy without a time.
 """
 import io
 import re
@@ -37,6 +38,7 @@ SAP_FIELDS = {
 DESCRIPTIONS = [  # (sap field, new column header, master type)
     ("offst", "Offst.acct Desc", "offsetting"),
     ("account", "Account Description", "account"),
+    ("account", "P&L Group", "pl_group"),
     ("costctr", "CC Description", "costcenter"),
     ("order", "Order Desc", "order"),
     ("material", "Material desc", "material"),
@@ -59,6 +61,19 @@ RULES = [
 FIELD_LABEL = {"offst": "Offst.acct", "account": "Account", "costctr": "Cost Ctr", "order": "Order",
                "material": "Material", "assignment": "Assignment"}
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+
+# Output columns and their order, exactly as the REDIFINED DATA sheet of the expense report.
+# Other SAP columns (Vendor, Reference, ...) are left out.
+LAYOUT = ["Month", "Offst.acct", "Offst.acct Desc", "Account", "Account Description", "P&L Group",
+          "Cost Ctr", "CC Description", "Order", "Order Desc", "DocumentNo", "Material", "Material desc",
+          "Doc. Date", "Pstng Date", "Plnt", "BusA", "Type", "PK", "Profit Ctr", "Assignment",
+          "Year/month", "Amount in local cur.", "Text", "Department"]
+LAYOUT_FIELD = {"Offst.acct": "offst", "Account": "account", "Cost Ctr": "costctr", "Order": "order",
+                "Material": "material", "Assignment": "assignment", "Year/month": "period",
+                "Amount in local cur.": "amount"}
+
+DATE_TEXT = re.compile(r"(\d{1,2})\s*[./-]\s*(\d{1,2})\s*[./-]\s*(\d{4})")  # dd-mm-yyyy, dd.mm.yyyy
+ISO_TEXT = re.compile(r"(\d{4})-(\d{2})-(\d{2})(?:[ T]00:00(?::00)?)?")
 
 
 def code(v) -> str:
@@ -110,14 +125,49 @@ def to_number(v):
     return -n if neg else n
 
 
+def day_first_swapped(values) -> bool:
+    """True when a date column's real dates were read month-first.
+
+    SAP exports dates as dd-mm-yyyy text. Excel or Sheets turns the ones with a day of 12 or
+    less into real dates with day and month swapped (12-10-2026 becomes 10 Dec), and leaves the
+    rest (13-10-2026) as text. That mix, with no real date past the 12th, is the sign.
+    """
+    has_text = any(isinstance(v, str) and DATE_TEXT.fullmatch(v.strip()) for v in values)
+    dates = [v for v in values if isinstance(v, (datetime, date))]
+    return has_text and bool(dates) and all(v.day <= 12 for v in dates)
+
+
+def to_date(v, swapped: bool = False):
+    """Turn a date cell (real date or dd-mm-yyyy text) into a date without a time part."""
+    if isinstance(v, (datetime, date)):
+        d = v.date() if isinstance(v, datetime) else v
+        return date(d.year, d.day, d.month) if swapped else d
+    if isinstance(v, str):
+        s = v.strip()
+        try:
+            if m := DATE_TEXT.fullmatch(s):
+                return date(int(m[3]), int(m[2]), int(m[1]))
+            if m := ISO_TEXT.fullmatch(s):
+                return date(int(m[1]), int(m[2]), int(m[3]))
+        except ValueError:
+            pass
+    return v
+
+
 # ---------- lookups from the masters ----------
 
 def _description_maps():
     out = {}
     for _, _, t in DESCRIPTIONS:
         m = MASTERS[t]
-        out[t] = {code(r["code"]): r.get("description", "") for r in db.all_rows(m)}
+        out[t] = {code(r["code"]): r.get("description", "") for r in db.all_rows(m) if _usable(r.get("description"))}
     return out
+
+
+def _usable(desc) -> bool:
+    """A description of 0 or a formula error (#N/A) counts as missing, so the code is reported."""
+    s = str(desc or "").strip()
+    return bool(s) and s != "0" and not s.startswith("#")
 
 
 def _rule_maps():
@@ -190,18 +240,28 @@ def process(data: bytes, file_name: str = ""):
     desc_maps = _description_maps()
     rule_maps, notes = _rule_maps()
 
-    # Output layout: Month, then the SAP columns with each description right after its key column,
-    # then Department and Department Source.
-    desc_after = {f[k]: (title, t) for k, title, t in DESCRIPTIONS if k in f}
-    existing = {norm_header(h) for h in header}
-    out_header, plan = ["Month"], []  # plan: ("src", i) | ("desc", i, master)
+    # Output layout: the LAYOUT columns only. A description already present in the file is
+    # copied, not looked up; a SAP column missing from the file stays blank.
+    by_name = {}
     for i, h in enumerate(header):
-        out_header.append(h or f"Column {i + 1}")
-        plan.append(("src", i))
-        if i in desc_after and norm_header(desc_after[i][0]) not in existing:
-            out_header.append(desc_after[i][0])
-            plan.append(("desc", i, desc_after[i][1]))
-    out_header += ["Department", "Department Source"]
+        by_name.setdefault(norm_header(h), i)
+    desc_for = {title: (k, t) for k, title, t in DESCRIPTIONS}
+    out_header, plan = list(LAYOUT), []  # plan: ("src", i) | ("desc", key_i, master) | (kind,)
+    for name in LAYOUT:
+        if name == "Month":
+            plan.append(("month",))
+        elif name == "Department":
+            plan.append(("dept",))
+        elif name in desc_for and norm_header(name) not in by_name:
+            k, t = desc_for[name]
+            plan.append(("desc", f[k], t) if k in f else ("blank",))
+        else:
+            i = f.get(LAYOUT_FIELD[name]) if name in LAYOUT_FIELD else by_name.get(norm_header(name))
+            plan.append(("src", i) if i is not None else ("blank",))
+
+    # Date columns (Doc. Date, Pstng Date, ...): real dates, day/month fixed where they were swapped.
+    date_cols = {i: day_first_swapped([r[i] for r in body])
+                 for i, h in enumerate(header) if norm_header(h).endswith("date")}
 
     step_counts = Counter()
     desc_stats = {t: {"matched": 0, "missing": Counter(), "blank": 0} for _, _, t in DESCRIPTIONS}
@@ -210,11 +270,37 @@ def process(data: bytes, file_name: str = ""):
     amount_i, period_i = f.get("amount"), f.get("period")
 
     for r in body:
-        rec = [fiscal_month(r[period_i]) if period_i is not None else None]
+        dept = None
+        for (label, _, fields, _, _), lookup in zip(RULES, rule_maps):
+            for fld in fields:
+                if fld in f:
+                    k = code(r[f[fld]])
+                    if k and k in lookup:
+                        dept = lookup[k]
+                        break
+            if dept:
+                step_counts[label] += 1
+                break
+        if not dept:
+            unmatched_accounts[cell_text(r[f["account"]]) or "(blank)"] += 1
+
+        rec = []
         for p in plan:
-            if p[0] == "src":
+            if p[0] == "month":
+                rec.append(fiscal_month(r[period_i]) if period_i is not None else None)
+            elif p[0] == "dept":
+                rec.append(dept)
+            elif p[0] == "blank":
+                rec.append(None)
+            elif p[0] == "src":
                 v = r[p[1]]
-                rec.append(to_number(v) if p[1] == amount_i else v)
+                if p[1] == amount_i:
+                    v = to_number(v)
+                elif p[1] in date_cols:
+                    v = to_date(v, date_cols[p[1]])
+                elif p[1] == period_i and isinstance(v, datetime):
+                    v = v.date()  # fiscal year/period, shown as yyyy/mm
+                rec.append(v)
             else:
                 k = code(r[p[1]])
                 st = desc_stats[p[2]]
@@ -227,21 +313,6 @@ def process(data: bytes, file_name: str = ""):
                 else:
                     st["missing"][cell_text(r[p[1]])] += 1
                     rec.append(None)
-
-        dept = source = None
-        for (label, _, fields, _, _), lookup in zip(RULES, rule_maps):
-            for fld in fields:
-                if fld in f:
-                    k = code(r[f[fld]])
-                    if k and k in lookup:
-                        dept, source = lookup[k], f"{label} (by {FIELD_LABEL[fld]})"
-                        break
-            if dept:
-                step_counts[label] += 1
-                break
-        if not dept:
-            unmatched_accounts[cell_text(r[f["account"]]) or "(blank)"] += 1
-        rec += [dept, source]
         out_rows.append(rec)
 
     # ---------- summary ----------
@@ -276,15 +347,31 @@ def process(data: bytes, file_name: str = ""):
     return summary, out_header, out_rows
 
 
+def _date_formats(out_header):
+    """Per column: (Excel number format, strftime pattern) for date values."""
+    fmts = []
+    for h in out_header:
+        n = norm_header(h)
+        if h == "Month":
+            fmts.append(("mmm-yy", None))
+        elif n in {norm_header(a) for a in SAP_FIELDS["period"]}:
+            fmts.append(("yyyy/mm", "%Y/%m"))
+        else:
+            fmts.append(("dd-mm-yyyy", "%d-%m-%Y"))
+    return fmts
+
+
 def preview(out_header, out_rows, limit=100):
-    def show(v):
-        if isinstance(v, datetime):
-            return v.strftime("%d-%m-%Y")
-        if isinstance(v, date):  # the Month column
-            return f"{MONTHS[v.month - 1]}-{v.year % 100:02d}"
+    fmts = _date_formats(out_header)
+
+    def show(v, j):
+        if isinstance(v, (datetime, date)):
+            if fmts[j][1] is None:  # the Month column
+                return f"{MONTHS[v.month - 1]}-{v.year % 100:02d}"
+            return v.strftime(fmts[j][1])
         return cell_text(v)
     dep = out_header.index("Department")
-    pick = lambda rows: [[show(v) for v in r] for r in rows[:limit]]
+    pick = lambda rows: [[show(v, j) for j, v in enumerate(r)] for r in rows[:limit]]
     return {"all": pick(out_rows), "unfilled": pick([r for r in out_rows if not r[dep]])}
 
 
@@ -293,8 +380,9 @@ def build_output(summary, out_header, out_rows) -> bytes:
     ws = wb.create_sheet("REDEFINED DATA")
     ws.freeze_panes = "A2"
     bold, fill = Font(bold=True), PatternFill("solid", fgColor="DDE6F3")
-    added = {"Month", "Department", "Department Source", *(d[1] for d in DESCRIPTIONS)}
+    added = {"Month", "Department", *(d[1] for d in DESCRIPTIONS)}
     added_fill = PatternFill("solid", fgColor="FCE9C6")
+    fmts = _date_formats(out_header)
     hdr = []
     for h in out_header:
         c = WriteOnlyCell(ws, value=h)
@@ -304,9 +392,9 @@ def build_output(summary, out_header, out_rows) -> bytes:
     for r in out_rows:
         row = []
         for i, v in enumerate(r):
-            if i == 0 and isinstance(v, date):
+            if isinstance(v, (datetime, date)):
                 c = WriteOnlyCell(ws, value=v)
-                c.number_format = "mmm-yy"
+                c.number_format = fmts[i][0]  # no 0:00:00 time part
                 row.append(c)
             elif isinstance(v, str) and v.isdigit() and len(v) < 16:
                 row.append(int(v))  # keep codes numeric so Excel lookups work

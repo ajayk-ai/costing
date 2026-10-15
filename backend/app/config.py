@@ -30,7 +30,7 @@ APP_RELOAD = (os.getenv("APP_RELOAD") or "false").lower() in ("1", "true", "yes"
 
 DB_PATH = _path("DB_PATH", "backend/data/costing.db")
 SEED_WORKBOOK = _path("SEED_WORKBOOK", "Departmnetwise Expense Report 2026-27 (2).xlsx")
-FRONTEND_DIST = _path("FRONTEND_DIST", "frontend/dist")
+FRONTEND_DIST = _path("FRONTEND_DIST", "backend/static")
 RUNS_DIR = _path("RUNS_DIR", "backend/data/runs")  # processed SAP files
 
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 100)
