@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Costing Master Data</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">Costing <span>Master Data</span></div>
+    <div class="top-actions">
+      <button class="btn" id="btnWorkbook" title="Upload the full expense report workbook; every master tab found in it is updated">Upload full workbook</button>
+    </div>
+  </header>
+
+  <main>
+    <nav class="tabs" id="tabs" role="tablist"></nav>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <h1 id="title">—</h1>
+          <p class="meta" id="meta"></p>
+        </div>
+        <div class="actions">
+          <button class="btn primary" id="btnUpload">Upload .xlsx</button>
+          <button class="btn" id="btnAdd">+ Add</button>
+          <a class="btn" id="btnExport">Download .xlsx</a>
+          <a class="btn ghost" id="btnTemplate">Template</a>
+        </div>
+      </div>
+
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Search code or description…" autocomplete="off">
+        <span class="count" id="count"></span>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th class="c-code" id="hCode">Code</th><th id="hDesc">Description</th><th class="c-upd">Updated</th><th class="c-act"></th></tr></thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <div class="pager">
+        <button class="btn sm" id="prev">‹ Prev</button>
+        <span id="pageInfo"></span>
+        <button class="btn sm" id="next">Next ›</button>
+        <select id="size"><option>25</option><option selected>50</option><option>100</option><option>250</option></select>
+      </div>
+
+      <details class="history">
+        <summary>Upload history</summary>
+        <table class="mini"><thead><tr><th>When</th><th>File</th><th>Sheet</th><th>Mode</th><th>New</th><th>Updated</th><th>Unchanged</th><th>Dup. skipped</th></tr></thead><tbody id="logs"></tbody></table>
+      </details>
+    </section>
+  </main>
+
+  <!-- Upload dialog -->
+  <dialog id="dlgUpload">
+    <form method="dialog" class="dlg">
+      <h2 id="upTitle">Upload</h2>
+      <p class="hint" id="upHint"></p>
+      <label class="file">
+        <input type="file" id="upFile" accept=".xlsx,.xls,.xlsm" required>
+      </label>
+      <fieldset>
+        <legend>Update mode</legend>
+        <label><input type="radio" name="mode" value="merge" checked> <b>Merge</b> — add new codes, update changed descriptions, keep the rest</label>
+        <label><input type="radio" name="mode" value="replace"> <b>Replace all</b> — delete existing records and load only this file</label>
+      </fieldset>
+      <div class="result" id="upResult" hidden></div>
+      <div class="dlg-actions">
+        <button type="button" class="btn" id="upClose">Close</button>
+        <button type="button" class="btn primary" id="upGo">Upload</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Add / edit dialog -->
+  <dialog id="dlgEdit">
+    <form class="dlg" id="editForm">
+      <h2 id="edTitle">Add</h2>
+      <label class="field"><span id="edCodeLbl">Code</span><input id="edCode" required></label>
+      <label class="field"><span id="edDescLbl">Description</span><input id="edDesc"></label>
+      <div class="result error" id="edErr" hidden></div>
+      <div class="dlg-actions">
+        <button type="button" class="btn" id="edCancel">Cancel</button>
+        <button type="submit" class="btn primary">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

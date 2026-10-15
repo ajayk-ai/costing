@@ -1,0 +1,17 @@
+{
+  "name": "costing-app",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Costing master data web app (Material, Offsetting, Order, Cost Center, Account descriptions)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "seed": "node seed.js"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "xlsx": "0.18.5"
+  }
+}

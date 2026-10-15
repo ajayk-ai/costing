@@ -1,0 +1,17 @@
+[project]
+name = "costing"
+version = "0.1.0"
+description = "Costing master data web app (FastAPI backend, React frontend)"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "openpyxl==3.1.5",
+    "python-multipart==0.0.20",
+    "python-dotenv==1.2.4",
+]
+
+[tool.uv]
+# An application, not a library: install dependencies only, don't build the project itself.
+package = false
