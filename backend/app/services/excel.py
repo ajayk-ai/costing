@@ -5,7 +5,7 @@ from datetime import date, datetime
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font, PatternFill
 
-from .masters import MASTERS, Column, Master, norm_header, slug
+from ..domain.masters import MASTERS, Column, Master, norm_header, slug
 
 
 def cell_text(v) -> str:

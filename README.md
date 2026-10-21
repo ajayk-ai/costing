@@ -69,19 +69,30 @@ uv run backend/seed.py                 # load masters from SEED_WORKBOOK
 
 ```
 costing/
-  .env                settings (not committed)  ·  .env.example  template
-  .venv/              Python environment (created by uv sync, not committed)
-  pyproject.toml      Python dependencies
-  uv.lock             pinned versions
-  .python-version
-  backend/            FastAPI app (app/, settings in app/config.py), run.py, seed.py, data/costing.db
-                      static/  built React app (committed, served at /)
-  frontend/           React app source; npm run build writes to backend/static/
-    src/ui/           reusable components: Button, Card, Modal, Tabs, FileDrop, Pagination, Alert, Toast, ...
-    src/layout/       Topbar and Sidebar (a drawer on phones)
-    src/pages/sap/    SAP Data Mapping page: upload, previous runs, result tabs
-    src/pages/masters/  master page: table, search, edit/upload dialogs, upload history
+  .env  .env.example   settings (.env is not committed)
+  pyproject.toml  uv.lock  .python-version   Python project (uv); requirements.txt is exported from it
+  start.bat            one-click start
+  backend/             FastAPI server  (Python)
+    run.py  seed.py    start the server / load masters from the workbook
+    app/
+      main.py          app wiring only: CORS, routers, frontend mount
+      config.py        all settings, read from .env
+      api/             HTTP layer: masters.py, sap.py, deps.py (shared helpers), frontend.py (serves the built UI)
+      services/        business logic: excel.py (parse/export), sap.py (SAP mapping rules), sap_runs.py (run + store result)
+      db/              SQLite: connection.py (schema, tx), master_repo.py, run_repo.py
+      domain/          masters.py: the 14 master definitions (columns, aliases, tab names)
+    tests/             pytest: test_e2e.py (API end to end), test_frontend_contract.py
+    static/            built React app, committed, served at /
+    data/              costing.db and processed SAP files (not committed)
+  frontend/            React app  (JavaScript, Vite)
+    src/api.js         the only file that talks to the backend
+    src/ui/            reusable components: Button, Card, Modal, Tabs, FileDrop, Pagination, Alert, Toast, ...
+    src/layout/        Topbar and Sidebar (a drawer on phones)
+    src/pages/sap/     SAP Data Mapping page: upload, previous runs, result tabs
+    src/pages/masters/ master page: table, search, edit/upload dialogs, upload history
 ```
+
+Dependency direction on the backend is one way: `api -> services -> db -> domain`. Routers hold no business logic; services never import `api`.
 
 ### Backend dependencies
 
@@ -100,6 +111,14 @@ uv export --no-hashes -o requirements.txt   # refresh requirements.txt for pip-o
 uv run backend/run.py                  # from the project root; set APP_RELOAD=true in .env for auto-restart
 cd frontend && npm run dev
 ```
+
+### Testing
+
+```
+uv run pytest                          # from the project root
+```
+
+`backend/tests/test_e2e.py` drives the real API (masters CRUD, Excel upload/export, SAP processing, download, frontend serving) against a temporary database, so it never touches `backend/data/`. `test_frontend_contract.py` fails if `frontend/src/api.js` calls an endpoint the backend does not serve.
 
 The second command runs Vite on `VITE_DEV_PORT` (5173) and forwards `/api` to `APP_PORT`. When done, run `npm install` (once) and `npm run build` in `frontend/`, then commit `backend/static/` so port 8000 and other machines get the new version.
 

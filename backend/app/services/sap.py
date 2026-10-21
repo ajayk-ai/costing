@@ -18,9 +18,9 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font, PatternFill
 
-from . import db
+from ..db import master_repo
+from ..domain.masters import MASTERS, norm_header
 from .excel import cell_text
-from .masters import MASTERS, norm_header
 
 # SAP columns used for lookups: key -> accepted header spellings.
 SAP_FIELDS = {
@@ -160,7 +160,7 @@ def _description_maps():
     out = {}
     for _, _, t in DESCRIPTIONS:
         m = MASTERS[t]
-        out[t] = {code(r["code"]): r.get("description", "") for r in db.all_rows(m) if _usable(r.get("description"))}
+        out[t] = {code(r["code"]): r.get("description", "") for r in master_repo.all_rows(m) if _usable(r.get("description"))}
     return out
 
 
@@ -175,14 +175,14 @@ def _rule_maps():
     maps, notes = [], []
     for label, t, fields, key, dept in RULES:
         m = MASTERS[t]
-        cols = db.columns_for(m)
+        cols = master_repo.columns_for(m)
         if key is None:  # dynamic columns (ESI & PF)
             dept_col = next((c.key for c in cols if "dept" in c.key or "department" in c.label.lower()), None)
             key = cols[0].key if cols else None
             dept = dept_col
         lookup, conflicts = {}, 0
         if key and dept:
-            for r in db.all_rows(m):
+            for r in master_repo.all_rows(m):
                 k, d = code(r.get(key)), (r.get(dept) or "").strip()
                 if not k or not d:
                     continue
@@ -190,7 +190,7 @@ def _rule_maps():
                     conflicts += lookup[k] != d
                     continue
                 lookup[k] = d
-        elif cols or db.stats().get(t):
+        elif cols or master_repo.stats().get(t):
             notes.append(f"{label}: no department column found, step skipped")
         maps.append(lookup)
         if conflicts:

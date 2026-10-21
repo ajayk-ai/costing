@@ -15,3 +15,13 @@ dependencies = [
 [tool.uv]
 # An application, not a library: install dependencies only, don't build the project itself.
 package = false
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["backend/tests"]
+pythonpath = ["backend", "backend/tests"]
