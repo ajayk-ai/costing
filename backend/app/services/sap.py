@@ -17,9 +17,11 @@ from datetime import date, datetime
 from openpyxl import Workbook, load_workbook
 from openpyxl.cell import WriteOnlyCell
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
 
 from ..db import master_repo
 from ..domain.masters import MASTERS, norm_header
+from . import sap_ai
 from .excel import cell_text
 
 # SAP columns used for lookups: key -> accepted header spellings.
@@ -315,6 +317,12 @@ def process(data: bytes, file_name: str = ""):
                     rec.append(None)
         out_rows.append(rec)
 
+    # AI department check: three extra columns after Department (the D1 result is not changed)
+    known_depts = {d for lookup in rule_maps for d in lookup.values()}
+    out_header, out_rows, ai_info = sap_ai.add_columns(out_header, out_rows, known_depts)
+    if ai_info and ai_info.get("note"):
+        notes.append(ai_info["note"])
+
     # ---------- summary ----------
     total = len(out_rows)
     remaining, steps = total, []
@@ -343,6 +351,7 @@ def process(data: bytes, file_name: str = ""):
                               for a, n in unmatched_accounts.most_common(30)],
         "notes": notes + ([f"No {FIELD_LABEL[k]} column in the file" for k in ("offst", "costctr", "order", "material") if k not in f]),
         "header": out_header,
+        "ai": ai_info,
     }
     return summary, out_header, out_rows
 
@@ -372,7 +381,12 @@ def preview(out_header, out_rows, limit=100):
         return cell_text(v)
     dep = out_header.index("Department")
     pick = lambda rows: [[show(v, j) for j, v in enumerate(r)] for r in rows[:limit]]
-    return {"all": pick(out_rows), "unfilled": pick([r for r in out_rows if not r[dep]])}
+    out = {"all": pick(out_rows), "unfilled": pick([r for r in out_rows if not r[dep]])}
+    if sap_ai.FLAG in out_header:
+        fl = out_header.index(sap_ai.FLAG)
+        for key, name in (("review", "REVIEW"), ("watch", "WATCH")):
+            out[key] = pick([r for r in out_rows if r[fl] == name])
+    return out
 
 
 def build_output(summary, out_header, out_rows) -> bytes:
@@ -380,7 +394,11 @@ def build_output(summary, out_header, out_rows) -> bytes:
     ws = wb.create_sheet("REDEFINED DATA")
     ws.freeze_panes = "A2"
     bold, fill = Font(bold=True), PatternFill("solid", fgColor="DDE6F3")
-    added = {"Month", "Department", *(d[1] for d in DESCRIPTIONS)}
+    added = {"Month", "Department", *(d[1] for d in DESCRIPTIONS), *sap_ai.column_names()}
+    flag_fill = {"REVIEW": PatternFill("solid", fgColor="F8CBAD"), "WATCH": PatternFill("solid", fgColor="FFF2CC"),
+                 "NO_DEPT": PatternFill("solid", fgColor="D9D9D9")}
+    ai_cols = {out_header.index(c) for c in sap_ai.column_names() if c in out_header}
+    flag_i = out_header.index(sap_ai.FLAG) if sap_ai.FLAG in out_header else None
     added_fill = PatternFill("solid", fgColor="FCE9C6")
     fmts = _date_formats(out_header)
     hdr = []
@@ -391,8 +409,13 @@ def build_output(summary, out_header, out_rows) -> bytes:
     ws.append(hdr)
     for r in out_rows:
         row = []
+        mark = flag_fill.get(r[flag_i]) if flag_i is not None else None  # REVIEW / WATCH / NO_DEPT rows
         for i, v in enumerate(r):
-            if isinstance(v, (datetime, date)):
+            if i in ai_cols and mark and v is not None:
+                c = WriteOnlyCell(ws, value=v)
+                c.fill = mark
+                row.append(c)
+            elif isinstance(v, (datetime, date)):
                 c = WriteOnlyCell(ws, value=v)
                 c.number_format = fmts[i][0]  # no 0:00:00 time part
                 row.append(c)
@@ -401,6 +424,8 @@ def build_output(summary, out_header, out_rows) -> bytes:
             else:
                 row.append(v)
         ws.append(row)
+    if flag_i is not None:  # filter buttons on the header, e.g. AI Flag = REVIEW
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(out_header))}{len(out_rows) + 1}"
 
     s = wb.create_sheet("Summary")
     s.append([WriteOnlyCell(s, value="Department fill steps")])
@@ -420,6 +445,26 @@ def build_output(summary, out_header, out_rows) -> bytes:
         s.append(["Accounts with no department", "Description", "Rows"])
         for a in summary["unmatchedAccounts"]:
             s.append([a["account"], a["description"], a["rows"]])
+    ai = summary.get("ai")
+    if ai and ai.get("enabled"):
+        m = ai.get("model") or {}
+        s.append([])
+        s.append([WriteOnlyCell(s, value="AI department check")])
+        s.append(["Model trained on", m.get("trainedOn"), f"{m.get('lines', 0):,} lines"])
+        s.append(["REVIEW when confidence is at least", ai["reviewConf"], "WATCH from", ai["watchConf"]])
+        s.append(["AI Flag", "Rows", "% of rows"])
+        for f in ("REVIEW", "WATCH", "NO_DEPT", "OK"):
+            n = ai["counts"].get(f, 0)
+            s.append([f, n, round(n / max(summary["rows"], 1), 4)])
+        if ai["pairs"]:
+            s.append([])
+            s.append(["REVIEW: assigned department", "AI suggested department", "Rows"])
+            for p in ai["pairs"]:
+                s.append([p["assigned"], p["suggested"], p["rows"]])
+        s.append([])
+        s.append(["By assigned department", "Rows", "REVIEW", "WATCH"])
+        for d in ai["byDept"]:
+            s.append([d["department"], d["rows"], d["review"], d["watch"]])
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

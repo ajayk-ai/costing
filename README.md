@@ -184,3 +184,34 @@ Interactive docs: http://localhost:8000/docs
 - `POST /api/masters/{type}/upload?mode=merge|replace` (multipart `file`)
 - `POST /api/upload-workbook?mode=merge|replace`
 - `GET /api/masters/{type}/export` · `/template` · `/logs`
+
+
+## AI department check
+
+The SAP Data Mapping result gets three extra columns right after `Department`: **AI Suggested Department**,
+**AI Flag** and **AI Reason**. The Department column (D1 rules) is never changed.
+
+* The model (logistic regression, `backend/app/services/ai_dept.py`) sees the vendor (Offst.acct), account, account
+  description and order description. It never sees the cost center, so it can catch a wrong cost center.
+* **AI Flag**: `REVIEW` the AI disagrees and is confident (>= `AI_REVIEW_CONF`, default 0.90); `WATCH` a weaker
+  disagreement (>= `AI_WATCH_CONF`, default 0.60) or this Cost Ctr + Account was never booked to the department;
+  `NO_DEPT` the line has no department (the suggestion is still shown); `OK` the AI agrees.
+* The result file shades REVIEW red, WATCH yellow and NO_DEPT grey and has filter buttons. The app shows an
+  **AI review** card, an **AI check** tab and **AI Review / AI Watch** buttons in the preview.
+* Many differences are systematic department rules, not mistakes: agree with finance which ones are real.
+
+### Train the model
+
+```
+uv run backend/train_ai.py "AI Sample Data.xlsx" "Departmnetwise Expense Report 2026-27.xlsx"
+```
+
+Give the old history together with the current year's Departmentwise Expense report (the tab named like
+"expense report" is read): the department convention changes over time, and a model trained only on old data agreed
+with the final 2026-27 departments on just 43% of lines, against about 82% when the current year is included.
+The model is saved to `AI_MODEL_FILE` (`backend/data/ai/dept_model.joblib`). Retrain every 3 months or at a year
+end. Without a model the SAP result is created as before, with a note that the AI columns were not added.
+
+`uv run backend/check_ai.py "<sap file>.xlsx"` processes a file and prints what the AI columns contain.
+Settings (`AI_ENABLED`, `AI_REVIEW_CONF`, `AI_WATCH_CONF`, `AI_MODEL_FILE`) are in `.env`.
+Spellings to merge (for example "Markeing" -> "Marketing") are in `DEPT_ALIASES` in `ai_dept.py`.

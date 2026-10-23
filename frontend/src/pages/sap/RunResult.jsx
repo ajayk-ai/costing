@@ -9,6 +9,7 @@ import RuleSteps from './RuleSteps.jsx';
 import DescriptionTable from './DescriptionTable.jsx';
 import ColumnOrder from './ColumnOrder.jsx';
 import PreviewTable from './PreviewTable.jsx';
+import AiCheck from './AiCheck.jsx';
 
 // Result of one processing run: headline numbers, then details in tabs.
 export default function RunResult({ run, onOpenMaster }) {
@@ -16,10 +17,12 @@ export default function RunResult({ run, onOpenMaster }) {
   const [tab, setTab] = useState('rules');
   const share = (n) => (s.rows ? (n / s.rows) * 100 : 0);
   const descGaps = s.descriptions.filter((d) => d.missingRows).length;
+  const ai = s.ai && s.ai.enabled ? s.ai : null;  // null for runs made without the AI check
 
   const tabs = [
     { id: 'rules', label: 'Department rules', count: s.unfilled || null, tone: 'warn' },
     { id: 'descriptions', label: 'Descriptions', count: descGaps || null, tone: 'warn' },
+    ...(ai ? [{ id: 'ai', label: 'AI check', count: ai.counts.REVIEW || null, tone: 'danger' }] : []),
     { id: 'columns', label: 'Columns', count: s.header.length },
     { id: 'preview', label: 'Preview' },
   ];
@@ -35,6 +38,8 @@ export default function RunResult({ run, onOpenMaster }) {
           hint={s.unfilled ? 'see Department rules below' : 'every row has a department'} />
         <StatCard label="Descriptions with gaps" value={fmt(descGaps)} tone={descGaps ? 'warn' : 'ok'}
           hint={descGaps ? 'codes missing from a master' : 'all codes found'} />
+        {ai && <StatCard label="AI review" value={fmt(ai.counts.REVIEW)} tone={ai.counts.REVIEW ? 'danger' : 'ok'}
+          hint={`${fmt(ai.counts.WATCH)} more to watch · see AI check`} />}
       </div>
 
       {s.notes.length > 0 && (
@@ -47,8 +52,9 @@ export default function RunResult({ run, onOpenMaster }) {
       <div className="tab-panel" role="tabpanel">
         {tab === 'rules' && <RuleSteps summary={s} onOpenMaster={onOpenMaster} />}
         {tab === 'descriptions' && <DescriptionTable descriptions={s.descriptions} onOpenMaster={onOpenMaster} />}
+        {tab === 'ai' && ai && <AiCheck ai={ai} rows={s.rows} />}
         {tab === 'columns' && <ColumnOrder header={s.header} />}
-        {tab === 'preview' && <PreviewTable header={s.header} preview={run.preview} unfilled={s.unfilled} />}
+        {tab === 'preview' && <PreviewTable header={s.header} preview={run.preview} unfilled={s.unfilled} ai={ai} />}
       </div>
     </Card>
   );
