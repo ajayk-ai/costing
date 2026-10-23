@@ -1,0 +1,17 @@
+services:
+  costing:
+    build: .
+    restart: unless-stopped
+    ports:
+      # Loopback only: on the cloud VM nginx (docker-compose.prod.yml) is the public entry point
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - costing-data:/data
+    environment:
+      MAX_UPLOAD_MB: "100"
+      # Substituted from the .env file next to this compose file; startup fails if unset
+      APP_USER: ${APP_USER:?set APP_USER in .env}
+      APP_PASSWORD: ${APP_PASSWORD:?set APP_PASSWORD in .env}
+
+volumes:
+  costing-data:

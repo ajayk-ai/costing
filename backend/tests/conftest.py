@@ -12,6 +12,7 @@ _TMP = Path(tempfile.mkdtemp(prefix="costing-test-"))
 os.environ["DB_PATH"] = str(_TMP / "costing.db")
 os.environ["RUNS_DIR"] = str(_TMP / "runs")
 os.environ["CORS_ORIGINS"] = ""
+os.environ["APP_PASSWORD"] = ""  # login is covered separately in test_auth.py
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

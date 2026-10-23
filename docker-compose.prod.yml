@@ -1,0 +1,14 @@
+# Cloud VM only: adds nginx in front of the app.
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# or put  COMPOSE_FILE=docker-compose.yml:docker-compose.prod.yml  in the VM's .env
+# and use plain "docker compose up -d --build".
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - costing
+    ports:
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro

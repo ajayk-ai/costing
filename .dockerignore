@@ -1,0 +1,13 @@
+.venv
+.git
+.vscode
+.pytest_cache
+.env
+__pycache__
+*.py[oc]
+*.xlsx
+backend/data
+backend/tests
+frontend/node_modules
+costing-app
+examples

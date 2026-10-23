@@ -9,9 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .api import masters, sap
 from .api.frontend import mount_frontend
+from .auth import basic_auth
 from .config import CORS_ORIGINS
 
 app = FastAPI(title="Costing Master Data")
+app.middleware("http")(basic_auth)  # added before CORS so CORS stays outermost and preflights pass
 if CORS_ORIGINS:
     app.add_middleware(CORSMiddleware, allow_origins=CORS_ORIGINS, allow_methods=["*"], allow_headers=["*"])
 

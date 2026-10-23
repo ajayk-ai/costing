@@ -28,6 +28,10 @@ APP_HOST = os.getenv("APP_HOST") or "127.0.0.1"
 APP_PORT = _int("APP_PORT", 8000)
 APP_RELOAD = (os.getenv("APP_RELOAD") or "false").lower() in ("1", "true", "yes")
 
+# Login for the whole app; auth is switched off while APP_PASSWORD is empty
+APP_USER = os.getenv("APP_USER") or ""
+APP_PASSWORD = os.getenv("APP_PASSWORD") or ""
+
 DB_PATH = _path("DB_PATH", "backend/data/costing.db")
 SEED_WORKBOOK = _path("SEED_WORKBOOK", "Departmnetwise Expense Report 2026-27 (2).xlsx")
 FRONTEND_DIST = _path("FRONTEND_DIST", "backend/static")
