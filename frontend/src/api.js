@@ -34,6 +34,7 @@ export const api = {
   deleteSapRun: (id) => request(`/api/sap/runs/${id}`, { method: 'DELETE' }),
   clearSapRuns: () => request('/api/sap/runs', { method: 'DELETE' }),
   sapDownloadUrl: (id) => `/api/sap/runs/${id}/download`,
+  sapDownloadFullUrl: (id) => `/api/sap/runs/${id}/download-full`,
   exportUrl: (type) => `/api/masters/${type}/export`,
   templateUrl: (type) => `/api/masters/${type}/template`,
 };

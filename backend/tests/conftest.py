@@ -13,6 +13,7 @@ os.environ["DB_PATH"] = str(_TMP / "costing.db")
 os.environ["RUNS_DIR"] = str(_TMP / "runs")
 os.environ["CORS_ORIGINS"] = ""
 os.environ["APP_PASSWORD"] = ""  # login is covered separately in test_auth.py
+os.environ["AI_MODEL_FILE"] = str(_TMP / "ai" / "dept_model.joblib")  # no model unless a test trains one
 
 import pytest  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402

@@ -117,7 +117,7 @@ def test_09_sap_processing_end_to_end(client):
     wb = load_workbook(io.BytesIO(dl.content))
     ws = wb.worksheets[0]
     header = [c.value for c in ws[1]]
-    assert header[0] == "Month" and header[-1] == "Department" and len(header) == 25
+    assert header[0] == "Month" and header[-3:] == ["Department", "GL Nature", "Overhead"] and len(header) == 27
     acc, dep = header.index("Account") + 1, header.index("Department") + 1
     dept = {str(ws.cell(i, acc).value): ws.cell(i, dep).value for i in range(2, 5)}
     assert dept["400200"] == "Logistics"
@@ -131,6 +131,59 @@ def test_09_sap_processing_end_to_end(client):
 
     assert client.get(f"/api/sap/runs/{run['id']}").json()["id"] == run["id"]
     assert any(x["id"] == run["id"] for x in client.get("/api/sap/runs").json())
+
+
+def test_09b_sap_with_ai_columns(client, monkeypatch, tmp_path):
+    """With a trained model the result gets 3 AI columns right after Department; Department is unchanged."""
+    import pandas as pd
+
+    from app.services import ai_dept
+
+    hist = pd.DataFrame(
+        [("E77", "400100", "Salary", "", "", "Assembly")] * 40
+        + [("", "400200", "Freight", "", "", "Logistics")] * 40
+        + [("", "999999", "Misc", "", "", "Finance")] * 40,
+        columns=["Vendor Code", "Account", "Account Desc.", "Cost Ctr", "Order Des", "Main Department"])
+    model = tmp_path / "m.joblib"
+    ai_dept.train(hist, model, evaluate=False, log=lambda *_: None)
+    monkeypatch.setattr(ai_dept, "AI_MODEL_FILE", model)
+
+    rows = [
+        ["", "400200", "", "", "0000100", "", "2026/01", "10.00", "a"],     # fixed rule -> Logistics, AI agrees
+        ["E77", "400100", "", "", "200", "", "2026/03", "20.00", "b"],       # emp id -> Assembly, AI agrees
+        ["", "999999", "", "", "", "", "2026/12", "5.00", "c"],              # no department, AI suggests Finance
+        ["E77", "400200", "", "", "", "", "2026/02", "7.00", "d"],           # fixed rule says Logistics, vendor says Assembly
+    ]
+    r = client.post("/api/sap/process", files=xlsx_file(sap_file(rows), "sap_ai.xlsx"))
+    assert r.status_code == 200, r.text
+    run = r.json()
+    h = run["summary"]["header"]
+    d = h.index("Department")
+    assert h[d + 1:d + 3] == ["GL Nature", "Overhead"]  # F1 columns right after Department
+    assert h[-3:] == ["AI Suggested Department", "AI Flag", "AI Reason"] and len(h) == 30  # AI columns last
+    ai = run["summary"]["ai"]
+    assert ai["enabled"] and sum(ai["counts"].values()) == 4 and ai["counts"]["NO_DEPT"] == 1
+    prev = run["preview"]
+    fl = h.index("AI Flag")
+    assert [x[fl] for x in prev["all"]][:3] == ["OK", "OK", "NO_DEPT"]
+    assert prev["all"][2][h.index("AI Suggested Department")] == "Finance"
+    assert all(x[fl] == "REVIEW" for x in prev["review"]) and all(x[fl] == "WATCH" for x in prev["watch"])
+
+    wb = load_workbook(io.BytesIO(client.get(f"/api/sap/runs/{run['id']}/download").content))
+    ws = wb.worksheets[0]
+    head = [c.value for c in ws[1]]
+    assert head[-3:] == h[-3:] and "AI Confidence" not in head
+    assert ws.cell(2, d + 1).value == "Logistics"  # D1 department untouched
+    assert ws.cell(4, fl + 1).value == "NO_DEPT" and ws.cell(4, fl + 1).fill.fgColor.rgb.endswith("D9D9D9")
+    assert ws.auto_filter.ref
+    assert any(c.value == "AI department check" for row in wb["Summary"].iter_rows() for c in row[:1])
+
+
+def test_09c_sap_without_model_has_no_ai_columns(client):
+    r = client.post("/api/sap/process", files=xlsx_file(sap_file([["", "400200", "", "", "", "", "2026/01", "1", "a"]]), "s.xlsx"))
+    s = r.json()["summary"]
+    assert len(s["header"]) == 27 and s["header"][-1] == "Overhead" and s["ai"]["enabled"] is False
+    assert any("not trained" in n for n in s["notes"])
 
 
 def test_10_sap_validation_and_cleanup(client):

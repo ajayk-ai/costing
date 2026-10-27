@@ -17,6 +17,13 @@ def _path(key: str, default: str) -> Path:
     return p if p.is_absolute() else (ROOT / p).resolve()
 
 
+def _float(key: str, default: float) -> float:
+    try:
+        return float(os.getenv(key) or default)
+    except ValueError:
+        raise SystemExit(f"{key} in .env must be a number, got {os.getenv(key)!r}")
+
+
 def _int(key: str, default: int) -> int:
     try:
         return int(os.getenv(key) or default)
@@ -39,3 +46,10 @@ RUNS_DIR = _path("RUNS_DIR", "backend/data/runs")  # processed SAP files
 
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 100)
 CORS_ORIGINS = [o.strip() for o in (os.getenv("CORS_ORIGINS") or "").split(",") if o.strip()]
+
+# AI department check (logistic regression model that suggests a department independently of the cost center)
+AI_ENABLED = (os.getenv("AI_ENABLED") or "true").lower() in ("1", "true", "yes")
+AI_MODEL_FILE = _path("AI_MODEL_FILE", "backend/data/ai/dept_model.joblib")
+AI_HISTORY_FILE = _path("AI_HISTORY_FILE", "backend/data/ai/history.csv")  # correctly assigned past lines, for train_ai.py
+AI_REVIEW_CONF = _float("AI_REVIEW_CONF", 0.90)  # model disagrees with confidence >= this -> REVIEW
+AI_WATCH_CONF = _float("AI_WATCH_CONF", 0.60)    # weaker disagreement (>= this) -> WATCH

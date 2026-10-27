@@ -332,3 +332,16 @@ dialog::backdrop { background: rgba(15, 25, 45, .45); }
   .pager-size { margin-left: 0; }
   .toasts { left: 16px; right: 16px; }
 }
+
+/* AI department check */
+.tab-count.danger { background: var(--danger-soft); color: var(--danger); }
+.stat.danger .stat-value { color: var(--danger); }
+.danger-text { color: var(--danger); }
+.sub-head { margin: 18px 0 8px; font-size: 14px; }
+.flag { display: inline-block; padding: 1px 9px; border-radius: 10px; font-size: 11px; font-weight: 600; white-space: nowrap; background: #eef0f3; color: var(--muted); }
+.flag.REVIEW { background: var(--danger-soft); color: var(--danger); }
+.flag.WATCH { background: var(--warn-soft); color: var(--warn); }
+.flag.OK { background: var(--ok-soft); color: var(--ok); }
+.table-wrap.preview tr.flag-REVIEW td { background: #fbe4df; }
+.table-wrap.preview tr.flag-WATCH td { background: #fff6dc; }
+.table-wrap.preview tr.flag-NO_DEPT td { background: #eceff3; }
