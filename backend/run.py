@@ -11,10 +11,10 @@ from pathlib import Path
 import uvicorn
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from app.config import APP_HOST, APP_PORT, APP_RELOAD  # noqa: E402
+from app.config import APP_HOST, APP_PORT, APP_RELOAD, BASE_PATH  # noqa: E402
 
 if __name__ == "__main__":
-    url = f"http://{'localhost' if APP_HOST in ('127.0.0.1', '0.0.0.0') else APP_HOST}:{APP_PORT}"
+    url = f"http://{'localhost' if APP_HOST in ('127.0.0.1', '0.0.0.0') else APP_HOST}:{APP_PORT}{BASE_PATH}/"
     if "--open" in sys.argv:
         threading.Timer(2.0, webbrowser.open, [url]).start()
     print(f"Costing app: {url}")

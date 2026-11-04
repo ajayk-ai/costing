@@ -1,6 +1,10 @@
 // Thin wrapper around the FastAPI endpoints.
+// BASE: '.' in the build (vite base './'), so ./api/... resolves under whatever path the page is
+// served from (/ or BASE_PATH, e.g. /costing/); '' in the dev server
+const BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+
 async function request(path, opts = {}) {
-  const res = await fetch(path, opts);
+  const res = await fetch(BASE + path, opts);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     const d = data.detail;
@@ -33,9 +37,9 @@ export const api = {
   sapRun: (id) => request(`/api/sap/runs/${id}`),
   deleteSapRun: (id) => request(`/api/sap/runs/${id}`, { method: 'DELETE' }),
   clearSapRuns: () => request('/api/sap/runs', { method: 'DELETE' }),
-  sapDownloadUrl: (id) => `/api/sap/runs/${id}/download`,
-  exportUrl: (type) => `/api/masters/${type}/export`,
-  templateUrl: (type) => `/api/masters/${type}/template`,
+  sapDownloadUrl: (id) => `${BASE}/api/sap/runs/${id}/download`,
+  exportUrl: (type) => `${BASE}/api/masters/${type}/export`,
+  templateUrl: (type) => `${BASE}/api/masters/${type}/template`,
 };
 
 export const fmt = (n) => Number(n || 0).toLocaleString('en-IN');

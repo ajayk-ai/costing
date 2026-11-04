@@ -33,6 +33,216 @@ start.bat                              # first run creates .env and .venv, then 
 
 Set `APP_HOST=0.0.0.0` in `.env` to let other PCs on the network open `http://<this-pc>:8000`. The database (`backend/data/`) and the Excel workbooks are not in git: copy `backend/data/costing.db` across, or upload the workbook in the app (**Upload full workbook**) or run `uv run backend/seed.py <file.xlsx>`.
 
+## Deploy on an Ubuntu server (Docker)
+
+Production setup: one Ubuntu VM runs both projects. This project's nginx owns port 80 and is the public entry point for both `ai.bullmachine.in/costing/` and `scm.ai.bullmachine.in/voicecall/` (voice_call runs its own containers behind it). Full detail, database loading, backups and troubleshooting: [DEPLOY_UBUNTU.md](DEPLOY_UBUNTU.md).
+
+### 1. Prepare Ubuntu and install Docker
+
+Ubuntu 22.04 or later with SSH access. The VM needs outbound internet access to Docker Hub (base images), PyPI (Python packages) and registry.npmjs.org (frontend build). Install Docker Engine and the Compose plugin from Docker's apt repository:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl git
+sudo install -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
+```
+
+Log out and back in (or run `newgrp docker`), then check:
+
+```bash
+docker --version
+docker compose version
+```
+
+### 2. DNS and firewall
+
+- A records (or a wildcard `*.ai.bullmachine.in`) for `ai.bullmachine.in` and `scm.ai.bullmachine.in` pointing at the VM's public IP.
+- Inbound **80** open in the cloud security group or NSG (443 too once HTTPS is added); 22 limited to known IPs.
+- Keep 8000, 8001, 8082 and 5432 closed; only nginx is public.
+
+On the VM, if using `ufw`:
+
+```bash
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+### 3. Clone and configure
+
+```bash
+git clone <repository-url> ~/costing
+cd ~/costing
+cp .env.example .env
+nano .env
+```
+
+Set at least:
+
+```dotenv
+APP_USER=<login id>
+APP_PASSWORD=<strong password>
+COSTING_DOMAIN=ai.bullmachine.in
+VOICE_DOMAIN=scm.ai.bullmachine.in
+# BASE_PATH=/costing        # default; change only for another path
+# FRONTEND_SOURCE=build     # default; leave unset on the server
+```
+
+- Create a fresh `.env` on the server; do not copy the office PC's `.env` (it has `FRONTEND_SOURCE=prebuilt`).
+- `APP_USER` / `APP_PASSWORD` are the HTTP Basic login; Compose refuses to start without them.
+- `certs/` stays empty on the server (it is only for an SSL-inspecting office proxy).
+- Lock the file down: `chmod 600 .env`.
+
+### 4. Build and start
+
+```bash
+docker compose up -d --build
+docker compose ps          # costing and nginx: Up
+```
+
+### 5. Load the database
+
+The `costing-data` volume starts empty. Choose one method. The commands below assume the project is cloned to `~/costing`, so the volume is `costing_costing-data`; otherwise check `docker volume ls`.
+
+**Copy the existing database from Windows** (PowerShell):
+
+```powershell
+scp -i <key> D:\path\to\costing\backend\data\costing.db <vm-user>@<vm-ip>:~/costing.db
+```
+
+On the VM:
+
+```bash
+docker compose stop costing
+docker run --rm -v costing_costing-data:/data -v ~:/src alpine cp /src/costing.db /data/costing.db
+docker compose start costing
+```
+
+**Or seed from the Excel workbook** (copy the `.xlsx` to the VM first):
+
+```bash
+docker compose run --rm \
+  -v "$HOME/<workbook-name>.xlsx:/app/workbook.xlsx:ro" \
+  costing uv run --no-sync backend/seed.py /app/workbook.xlsx
+```
+
+`seed.py` merges by default; add `--replace` after the path to replace existing data.
+
+### 6. Verify
+
+```bash
+curl -I -H "Host: ai.bullmachine.in" http://localhost/costing/              # 401 = login prompt, app is up
+curl -u '<login id>:<password>' -I http://localhost/costing/                # 200
+```
+
+From a browser: `http://ai.bullmachine.in/costing/` (`/` redirects there).
+
+### 7. Deploy voice_call too
+
+This nginx forwards `VOICE_DOMAIN` to the voice_call project on host port 8082, so run its stack as well (steps in the voice_call project's `readme.md`):
+
+```bash
+git clone <voice_call-repository-url> ~/voice_call
+cd ~/voice_call
+cp .env.example .env && nano .env    # VOICE_DOMAIN=scm.ai.bullmachine.in, PUBLIC_URL=https://scm.ai.bullmachine.in/voicecall
+chmod 600 .env
+docker compose up -d --build
+```
+
+Until voice_call is up, `scm.ai.bullmachine.in` answers 502; `ai.bullmachine.in` is unaffected. The two projects can start in either order.
+
+### 8. Update, logs, stop, backup
+
+```bash
+cd ~/costing
+git pull && docker compose up -d --build   # new version, data volume kept
+docker compose logs -f costing             # or: nginx
+docker compose down                        # stop; never add -v (deletes the database volume)
+```
+
+Back up the SQLite database (restore steps in [DEPLOY_UBUNTU.md](DEPLOY_UBUNTU.md)):
+
+```bash
+mkdir -p ~/backup
+docker run --rm -v costing_costing-data:/data -v ~/backup:/b alpine \
+  sh -c 'cp /data/costing.db /b/costing-$(date +%F).db'
+```
+
+The site is plain HTTP until a TLS certificate is added to this nginx. voice_call needs HTTPS for phone calls.
+
+## Docker (local and server)
+
+This project and the voice_call project each have their own `docker-compose.yml` and their own nginx. Each app runs under its own **base path**: costing under `/costing/`, voice_call under `/voicecall/`. `/` redirects to the base path. Domains and base paths come from `.env`, so the same files work on your PC and on the server.
+
+```
+:80 --> costing nginx --+-- COSTING_DOMAIN/costing/   --> costing app (127.0.0.1:8000/costing/)
+                        +-- VOICE_DOMAIN/voicecall/   --> voice_call nginx (:8082) --> voice_call web (127.0.0.1:8001/voicecall/)
+```
+
+| | costing | voice_call |
+|---|---|---|
+| App port directly | http://127.0.0.1:8000/costing/ | http://127.0.0.1:8001/voicecall/ |
+| Through nginx, local (default) | http://localhost/costing/ | http://scm.localhost/voicecall/ (also http://localhost:8082/voicecall/) |
+| Through nginx, server | http://ai.bullmachine.in/costing/ | http://scm.ai.bullmachine.in/voicecall/ |
+
+| Setting (`.env`) | costing default | voice_call default | Server value |
+|---|---|---|---|
+| `BASE_PATH` | `/costing` | `/voicecall` | same (change only if you want another path) |
+| `COSTING_DOMAIN` | `localhost` | – | `ai.bullmachine.in` |
+| `VOICE_DOMAIN` | `scm.localhost` | `scm.localhost` | `scm.ai.bullmachine.in` (same in both projects) |
+
+Only one process can use port 80, so this project's nginx owns it and forwards `VOICE_DOMAIN` to voice_call. Run both projects. The two can start in either order; until voice_call is up, its name answers 502. The nginx config is [deploy/nginx.conf.template](deploy/nginx.conf.template), and nginx fills in the domains and base path when it starts.
+
+**How the image is built** ([Dockerfile](Dockerfile), [docker-compose.yml](docker-compose.yml)):
+1. The frontend is built from `frontend/` with `npm ci && npm run build` inside Docker (`FRONTEND_SOURCE=build`, the default). On networks that block npm it comes from the host-built `backend/static` instead (`FRONTEND_SOURCE=prebuilt`).
+2. The Python dependencies are installed with uv, the backend is copied to `/app/backend`, and the frontend goes to `/app/backend/static` (`FRONTEND_DIST`).
+3. The app starts with `uv run --no-sync backend/run.py` (the `command:` in docker-compose.yml) on port 8000 under `BASE_PATH`. Data lives in the `costing-data` volume at `/data`.
+
+The frontend uses relative URLs, so one build works under any `BASE_PATH`. Changing the path needs only `docker compose up -d`, not a rebuild.
+
+### Run locally (Docker Desktop)
+
+1. Start Docker Desktop.
+2. `.env` needs `APP_USER` and `APP_PASSWORD` (`copy .env.example .env`). Leave `COSTING_DOMAIN`/`VOICE_DOMAIN`/`BASE_PATH` unset for the defaults.
+3. **Office network only** (Fortinet SSL inspection, npm registry blocked):
+   - Put the firewall's CA certificate in `certs/` as a `.crt` file (PEM), or builds fail with `CERTIFICATE_VERIFY_FAILED`. Export it from Windows (`certmgr.msc` → Trusted Root → the Fortinet `FG…` certificate → Export, Base-64). `certs/*.crt` is git-ignored.
+   - Add `FRONTEND_SOURCE=prebuilt` to `.env` and build the frontend on the PC first: `cd frontend && npm run build` (this needs the existing `node_modules`).
+   - On the server, leave `certs/` empty and `FRONTEND_SOURCE` unset.
+4. Start:
+   ```
+   docker compose up -d --build
+   docker compose ps                  # costing and nginx: Up
+   ```
+5. Open http://localhost/costing/ or http://127.0.0.1:8000/costing/ (login prompt). Start voice_call too for http://scm.localhost/voicecall/. Chrome, Edge and Firefox resolve `*.localhost` to your own PC.
+
+### Server deployment
+
+See [Deploy on an Ubuntu server (Docker)](#deploy-on-an-ubuntu-server-docker) above for the full step-by-step setup (Docker install, DNS/firewall, `.env`, build, database, verify, updates and backups).
+
+### Changing a domain or base path later
+
+- **Domain:** edit `COSTING_DOMAIN` / `VOICE_DOMAIN` in `.env`, then run `docker compose up -d nginx`. If you change `VOICE_DOMAIN`, set the same value in voice_call's `.env` and restart its nginx too. Update DNS to match.
+- **Base path:** edit `BASE_PATH` in `.env` and run `docker compose up -d`. That recreates the app and nginx; no rebuild is needed.
+
+No file edits are needed for either.
+
+### Update, logs, stop
+
+```bash
+git pull && docker compose up -d --build   # new version, data volume kept
+docker compose logs -f costing             # or: nginx
+docker compose down                        # stop; never add -v (deletes the database volume)
+```
+
+Database loading, backups and troubleshooting are in [DEPLOY_UBUNTU.md](DEPLOY_UBUNTU.md). The site is plain HTTP until a TLS certificate is added to this nginx. voice_call needs HTTPS for phone calls.
+
 ## Configuration (.env)
 
 All settings live in `.env` in the project root. `.env` is not committed: copy `.env.example` to `.env` and edit it (`start.bat` does this automatically the first time). Relative paths are resolved from the project root. A real environment variable with the same name overrides `.env`.
@@ -44,7 +254,9 @@ All settings live in `.env` in the project root. `.env` is not committed: copy `
 | `APP_RELOAD` | `false` | `true` restarts the server when backend code changes (development) |
 | `DB_PATH` | `backend/data/costing.db` | SQLite database file |
 | `SEED_WORKBOOK` | `Departmnetwise Expense Report 2026-27 (2).xlsx` | workbook loaded by `seed.py` when no path is given |
-| `FRONTEND_DIST` | `backend/static` | built React app served at `/` |
+| `FRONTEND_DIST` | `backend/static` | built React app served at `/` (or at `BASE_PATH/`) |
+| `BASE_PATH` | *(empty)*; `/costing` in Docker | URL prefix the whole app is served under; `/` redirects there |
+| `FRONTEND_SOURCE` | `build` | Docker only: `build` runs npm in Docker; `prebuilt` uses the host-built `backend/static` |
 | `VITE_DEV_PORT` | `5173` | port for `npm run dev` |
 | `MAX_UPLOAD_MB` | `100` | largest Excel upload accepted |
 | `CORS_ORIGINS` | *(empty)* | comma-separated origins allowed to call the API from another host |
