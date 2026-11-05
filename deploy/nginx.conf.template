@@ -1,0 +1,69 @@
+# Central edge nginx for the whole server: one domain, one path per project.
+# Rendered by the nginx image at startup; ${DOMAIN}, ${BASE_PATH} and ${SCM_PATH} come from
+# docker-compose.yml (defaults: localhost / /costing / /scm; server: set DOMAIN in .env).
+#
+#   ${DOMAIN}${BASE_PATH}/  -> costing container   (this project,         alias "costing")
+#   ${DOMAIN}${SCM_PATH}/   -> voice_call web      (voice_call project,   alias "voice-web")
+#
+# Both apps join the shared external Docker network "ai-proxy". The upstreams are resolved per
+# request through Docker's DNS, so nginx starts (and keeps serving costing) even when voice_call
+# is down; that path just answers 502 until it is back.
+
+resolver 127.0.0.11 valid=10s ipv6=off;
+
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    # default_server: plain IP access and unknown names land here too
+    listen 80 default_server;
+    server_name ${DOMAIN};
+
+    # Relative Location headers, so redirects keep the scheme/port the browser used
+    absolute_redirect off;
+
+    location = / {
+        return 302 ${BASE_PATH}/;
+    }
+
+    # ---- SCM / voice call (voice_call project, served by the app under ${SCM_PATH}) ----
+    location ${SCM_PATH}/ {
+        set $voice_upstream http://voice-web:8000;
+        # No URI part: the full path (${SCM_PATH}/...) is passed through unchanged
+        proxy_pass $voice_upstream;
+        client_max_body_size 30m;
+        # /media and /test-ws are websockets
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # A call's websocket stays open for the whole call
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+        proxy_buffering off;
+    }
+
+    location = ${SCM_PATH} {
+        return 301 ${SCM_PATH}/;
+    }
+
+    # ---- Costing (this project, served by the app under ${BASE_PATH}) ----
+    location / {
+        set $costing_upstream http://costing:8000;
+        proxy_pass $costing_upstream;
+        # Keep in step with MAX_UPLOAD_MB (SAP workbook uploads)
+        client_max_body_size 100m;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        # Large SAP files can take a while to process
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}

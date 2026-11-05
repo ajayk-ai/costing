@@ -14,3 +14,6 @@ wheels/
 backend/data/
 frontend/node_modules/
 *.xlsx
+
+# Extra CA certs for local builds behind an SSL-inspecting proxy (machine-specific)
+certs/*.crt

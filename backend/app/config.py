@@ -44,6 +44,9 @@ SEED_WORKBOOK = _path("SEED_WORKBOOK", "Departmnetwise Expense Report 2026-27 (2
 FRONTEND_DIST = _path("FRONTEND_DIST", "backend/static")
 RUNS_DIR = _path("RUNS_DIR", "backend/data/runs")  # processed SAP files
 
+_base = (os.getenv("BASE_PATH") or "").strip().strip("/")
+BASE_PATH = f"/{_base}" if _base else ""  # URL prefix, e.g. /costing; empty = site root
+
 MAX_UPLOAD_MB = _int("MAX_UPLOAD_MB", 100)
 CORS_ORIGINS = [o.strip() for o in (os.getenv("CORS_ORIGINS") or "").split(",") if o.strip()]
 
