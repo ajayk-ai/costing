@@ -7,20 +7,29 @@ For local development, run `uv run backend/run.py` and open `http://localhost:80
 ## 1. Architecture
 
 ```
-Browser --> nginx (port 80) --+-- ai.bullmachine.in     --> costing container (port 8000, loopback only)
-                              |                                  |
-                              |                                  +--> Docker volume "costing-data" (/data: costing.db, runs/)
-                              +-- scm.ai.bullmachine.in --> voice_call project's nginx (host port 8082)
+Browser --> nginx (this project, port 80) --+-- ai.bullmachine.in/costing/ --> costing    (this project)
+            the server's only public entry   |                                   +--> volume "costing-data" (/data)
+                                             +-- ai.bullmachine.in/scm/     --> voice-web  (~/voice_call project)
+                                                                                 +--> PostgreSQL (voice_call)
+            all three joined by the shared external Docker network "ai-proxy"
 ```
 
 | File | Purpose |
 |---|---|
 | `Dockerfile` | Builds the app image (Python 3.14 with uv) |
-| `docker-compose.yml` | App (`127.0.0.1:8000`) and nginx (port 80) |
-| `deploy/nginx.conf.template` | Reverse proxy settings (upload limit, timeouts); domains filled in from `COSTING_DOMAIN` / `VOICE_DOMAIN` |
+| `docker-compose.yml` | App (`127.0.0.1:8000`) and the central nginx (port 80) |
+| `deploy/nginx.conf.template` | Reverse proxy for both projects (upload limits, timeouts, websockets); filled in from `DOMAIN`, `BASE_PATH`, `SCM_PATH` |
 | `certs/` | Optional extra CA certificates for builds behind an SSL-inspecting proxy; empty on the server |
 
-This nginx holds port 80 for the whole server, so it also forwards `scm.ai.bullmachine.in` to the voice_call project. If voice_call is not running, that name answers 502; `ai.bullmachine.in` is unaffected. Without `COSTING_DOMAIN`/`VOICE_DOMAIN` in `.env` the names default to `localhost`/`scm.localhost` (local use).
+The two projects are started and maintained separately (`docker compose up -d` in `~/costing` and in `~/voice_call`). This project's nginx holds port 80 for the whole server and forwards `/scm/` to the voice_call `web` service (network alias `voice-web`). Upstreams are resolved per request, so nginx starts even when voice_call is down; `/scm/` then answers 502 and `/costing/` is unaffected. Without `DOMAIN` in `.env` the name defaults to `localhost` (local use).
+
+One-time setup on each machine, before the first `docker compose up` of either project:
+
+```bash
+docker network create ai-proxy
+```
+
+Nothing else on the host may listen on port 80 (for example a systemd nginx site with `listen 80`).
 
 ## 2. Prerequisites
 
@@ -65,11 +74,10 @@ nano .env
 ```
 APP_USER=<login id>
 APP_PASSWORD=<strong password>
-COSTING_DOMAIN=ai.bullmachine.in
-VOICE_DOMAIN=scm.ai.bullmachine.in
+DOMAIN=ai.bullmachine.in
 ```
 
-- `COSTING_DOMAIN` / `VOICE_DOMAIN` are the host names nginx answers to. To change a domain later, edit them and run `docker compose up -d nginx`.
+- `DOMAIN` is the host name nginx answers to; `/costing/` and `/scm/` hang off it. To change it later, edit it and run `docker compose up -d nginx`. `SCM_PATH` (default `/scm`) must equal `BASE_PATH` of the voice_call project.
 - `APP_USER` and `APP_PASSWORD` protect the whole app (HTTP Basic login). Compose refuses to start if either is missing.
 - Use a long random password. Do not reuse a personal password.
 - Restrict the file: `chmod 600 .env`.
@@ -82,7 +90,7 @@ docker compose ps
 docker compose logs -f
 ```
 
-Both `costing` and `nginx` should show as running. Open `http://ai.bullmachine.in/costing/` (or `http://<VM-public-IP>/costing/`) in a browser and sign in.
+Both `costing` and `nginx` should show as running. Open `http://ai.bullmachine.in/costing/` (or `http://<VM-public-IP>/costing/`) in a browser and sign in. The voice_call app is at `http://ai.bullmachine.in/scm/` once that project is up.
 
 ## 6. Load the database
 
@@ -155,10 +163,12 @@ Keep backups off the VM as well (another disk or storage account). The SAP run f
 |---|---|
 | `docker compose up` stops with "set APP_USER in .env" | `.env` is missing or incomplete in `~/costing` |
 | Page does not open from outside | Port 80 in the cloud security group; `sudo ufw status`; `docker compose ps` |
-| 502 Bad Gateway | App container not running: `docker compose logs costing` |
+| 502 Bad Gateway | On `/costing/`: `docker compose logs costing`. On `/scm/`: voice_call not running or not on `ai-proxy` (`cd ~/voice_call && docker compose ps`) |
+| nginx: "address already in use" on port 80 | Another process holds port 80: `sudo ss -ltnp 'sport = :80'` (e.g. a host nginx site; remove its `listen 80`) |
+| "network ai-proxy declared as external, but could not be found" | `docker network create ai-proxy` |
 | 413 on upload | Raise `client_max_body_size` in `deploy/nginx.conf.template` to match `MAX_UPLOAD_MB`, then `docker compose up -d --force-recreate nginx` |
 | Upload times out | Raise `proxy_read_timeout` in `deploy/nginx.conf.template` |
-| Domain shows the wrong app or the default page | `COSTING_DOMAIN` / `VOICE_DOMAIN` in `.env`; `docker compose exec nginx cat /etc/nginx/conf.d/default.conf` shows the rendered names |
+| Wrong app or path | `DOMAIN` / `SCM_PATH` in `.env`; `docker compose exec nginx cat /etc/nginx/conf.d/default.conf` shows the rendered config |
 | Build fails with `CERTIFICATE_VERIFY_FAILED` | An SSL-inspecting proxy: put its CA (PEM `.crt`) in `certs/` and rebuild |
 | Data lost after rebuild | Never run `docker compose down -v`; `-v` deletes the data volume |
 

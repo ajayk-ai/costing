@@ -3,10 +3,13 @@
 #            image build: frontend/ is built with "npm ci && npm run build" (FRONTEND_SOURCE=build),
 #            or taken from the host-built backend/static (FRONTEND_SOURCE=prebuilt);
 #            then the Python deps are installed and the frontend is copied to /app/backend/static
-#   nginx:   host port 80 -> COSTING_DOMAIN (this app; / redirects to BASE_PATH/)
-#            and VOICE_DOMAIN -> voice_call project's nginx on host port 8082
-#            Local defaults: http://localhost/costing/ and http://scm.localhost/voicecall/
-#            Server: COSTING_DOMAIN=ai.bullmachine.in, VOICE_DOMAIN=scm.ai.bullmachine.in in .env
+#   nginx:   the server's single public entry point (host port 80), one domain for both projects:
+#              DOMAIN/costing/ -> costing   (this project)
+#              DOMAIN/scm/     -> voice-web (voice_call project, started separately)
+#            Local default: http://localhost/costing/ and http://localhost/scm/
+#            Server: DOMAIN=ai.bullmachine.in in .env
+#   Both projects join the shared external network "ai-proxy". Create it once per server:
+#     docker network create ai-proxy
 services:
   costing:
     build:
@@ -24,6 +27,9 @@ services:
       - "127.0.0.1:8000:8000"
     volumes:
       - costing-data:/data
+    networks:
+      - default
+      - ai-proxy
     environment:
       BASE_PATH: ${BASE_PATH:-/costing}
       MAX_UPLOAD_MB: "100"
@@ -39,15 +45,20 @@ services:
     ports:
       - "80:80"
     environment:
-      COSTING_DOMAIN: ${COSTING_DOMAIN:-localhost}
-      VOICE_DOMAIN: ${VOICE_DOMAIN:-scm.localhost}
+      DOMAIN: ${DOMAIN:-localhost}
       BASE_PATH: ${BASE_PATH:-/costing}
-    extra_hosts:
-      # Lets nginx reach the voice_call nginx published on the host
-      - "host.docker.internal:host-gateway"
+      # Must equal BASE_PATH of the voice_call project (its docker-compose.yml default is /scm)
+      SCM_PATH: ${SCM_PATH:-/scm}
+    networks:
+      - ai-proxy
     volumes:
       # Rendered to /etc/nginx/conf.d/default.conf with the values above
       - ./deploy/nginx.conf.template:/etc/nginx/templates/default.conf.template:ro
 
 volumes:
   costing-data:
+
+networks:
+  # Shared with the voice_call project; created once with "docker network create ai-proxy"
+  ai-proxy:
+    external: true

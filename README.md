@@ -35,7 +35,7 @@ Set `APP_HOST=0.0.0.0` in `.env` to let other PCs on the network open `http://<t
 
 ## Deploy on an Ubuntu server (Docker)
 
-Production setup: one Ubuntu VM runs both projects. This project's nginx owns port 80 and is the public entry point for both `ai.bullmachine.in/costing/` and `scm.ai.bullmachine.in/voicecall/` (voice_call runs its own containers behind it). Full detail, database loading, backups and troubleshooting: [DEPLOY_UBUNTU.md](DEPLOY_UBUNTU.md).
+Production setup: one Ubuntu VM runs both projects. This project's nginx owns port 80 and is the single public entry point for one domain: `ai.bullmachine.in/costing/` (this app) and `ai.bullmachine.in/scm/` (voice_call, its own separate Compose project, reached over the shared Docker network `ai-proxy`). Full detail, database loading, backups and troubleshooting: [DEPLOY_UBUNTU.md](DEPLOY_UBUNTU.md).
 
 ### 1. Prepare Ubuntu and install Docker
 
@@ -62,9 +62,9 @@ docker compose version
 
 ### 2. DNS and firewall
 
-- A records (or a wildcard `*.ai.bullmachine.in`) for `ai.bullmachine.in` and `scm.ai.bullmachine.in` pointing at the VM's public IP.
+- An A record for `ai.bullmachine.in` pointing at the VM's public IP (both apps share it).
 - Inbound **80** open in the cloud security group or NSG (443 too once HTTPS is added); 22 limited to known IPs.
-- Keep 8000, 8001, 8082 and 5432 closed; only nginx is public.
+- Keep 8000, 8001 and 5432 closed; only nginx is public.
 
 On the VM, if using `ufw`:
 
@@ -89,9 +89,9 @@ Set at least:
 ```dotenv
 APP_USER=<login id>
 APP_PASSWORD=<strong password>
-COSTING_DOMAIN=ai.bullmachine.in
-VOICE_DOMAIN=scm.ai.bullmachine.in
+DOMAIN=ai.bullmachine.in
 # BASE_PATH=/costing        # default; change only for another path
+# SCM_PATH=/scm             # default; must equal voice_call's BASE_PATH
 # FRONTEND_SOURCE=build     # default; leave unset on the server
 ```
 
@@ -146,17 +146,17 @@ From a browser: `http://ai.bullmachine.in/costing/` (`/` redirects there).
 
 ### 7. Deploy voice_call too
 
-This nginx forwards `VOICE_DOMAIN` to the voice_call project on host port 8082, so run its stack as well (steps in the voice_call project's `readme.md`):
+This nginx forwards `/scm/` to the voice_call project's `web` service over the `ai-proxy` network, so run its stack as well (steps in the voice_call project's `readme.md`):
 
 ```bash
 git clone <voice_call-repository-url> ~/voice_call
 cd ~/voice_call
-cp .env.example .env && nano .env    # VOICE_DOMAIN=scm.ai.bullmachine.in, PUBLIC_URL=https://scm.ai.bullmachine.in/voicecall
+cp .env.example .env && nano .env    # PUBLIC_URL=https://ai.bullmachine.in/scm
 chmod 600 .env
 docker compose up -d --build
 ```
 
-Until voice_call is up, `scm.ai.bullmachine.in` answers 502; `ai.bullmachine.in` is unaffected. The two projects can start in either order.
+Until voice_call is up, `/scm/` answers 502; `/costing/` is unaffected. The two projects can start in either order (both need `docker network create ai-proxy` once).
 
 ### 8. Update, logs, stop, backup
 
@@ -179,26 +179,28 @@ The site is plain HTTP until a TLS certificate is added to this nginx. voice_cal
 
 ## Docker (local and server)
 
-This project and the voice_call project each have their own `docker-compose.yml` and their own nginx. Each app runs under its own **base path**: costing under `/costing/`, voice_call under `/voicecall/`. `/` redirects to the base path. Domains and base paths come from `.env`, so the same files work on your PC and on the server.
+This project and the voice_call project each have their own `docker-compose.yml` and are started separately. There is one nginx, in this project; voice_call has none. Each app runs under its own **base path** on one domain: costing under `/costing/`, voice_call under `/scm/`. The domain and paths come from `.env`, so the same files work on your PC and on the server.
 
 ```
-:80 --> costing nginx --+-- COSTING_DOMAIN/costing/   --> costing app (127.0.0.1:8000/costing/)
-                        +-- VOICE_DOMAIN/voicecall/   --> voice_call nginx (:8082) --> voice_call web (127.0.0.1:8001/voicecall/)
+:80 --> nginx (this project) --+-- DOMAIN/costing/ --> costing   (127.0.0.1:8000/costing/)
+                               +-- DOMAIN/scm/     --> voice-web (127.0.0.1:8001/scm/, voice_call project)
+        shared external Docker network "ai-proxy" (create once: docker network create ai-proxy)
 ```
 
 | | costing | voice_call |
 |---|---|---|
-| App port directly | http://127.0.0.1:8000/costing/ | http://127.0.0.1:8001/voicecall/ |
-| Through nginx, local (default) | http://localhost/costing/ | http://scm.localhost/voicecall/ (also http://localhost:8082/voicecall/) |
-| Through nginx, server | http://ai.bullmachine.in/costing/ | http://scm.ai.bullmachine.in/voicecall/ |
+| App port directly | http://127.0.0.1:8000/costing/ | http://127.0.0.1:8001/scm/ |
+| Through nginx, local (default) | http://localhost/costing/ | http://localhost/scm/ |
+| Through nginx, server | http://ai.bullmachine.in/costing/ | http://ai.bullmachine.in/scm/ |
 
-| Setting (`.env`) | costing default | voice_call default | Server value |
+| Setting (`.env`) | Project | Default | Server value |
 |---|---|---|---|
-| `BASE_PATH` | `/costing` | `/voicecall` | same (change only if you want another path) |
-| `COSTING_DOMAIN` | `localhost` | – | `ai.bullmachine.in` |
-| `VOICE_DOMAIN` | `scm.localhost` | `scm.localhost` | `scm.ai.bullmachine.in` (same in both projects) |
+| `DOMAIN` | costing | `localhost` | `ai.bullmachine.in` |
+| `BASE_PATH` | costing | `/costing` | same |
+| `SCM_PATH` | costing (nginx) | `/scm` | same; must equal voice_call's `BASE_PATH` |
+| `BASE_PATH` | voice_call | `/scm` | same |
 
-Only one process can use port 80, so this project's nginx owns it and forwards `VOICE_DOMAIN` to voice_call. Run both projects. The two can start in either order; until voice_call is up, its name answers 502. The nginx config is [deploy/nginx.conf.template](deploy/nginx.conf.template), and nginx fills in the domains and base path when it starts.
+Only one process can use port 80, so this project's nginx owns it and forwards `/scm/` to voice_call (alias `voice-web` on `ai-proxy`). nginx resolves both upstreams per request, so the two projects can start in either order; until voice_call is up, `/scm/` answers 502. The nginx config is [deploy/nginx.conf.template](deploy/nginx.conf.template), and nginx fills in the domain and paths when it starts.
 
 **How the image is built** ([Dockerfile](Dockerfile), [docker-compose.yml](docker-compose.yml)):
 1. The frontend is built from `frontend/` with `npm ci && npm run build` inside Docker (`FRONTEND_SOURCE=build`, the default). On networks that block npm it comes from the host-built `backend/static` instead (`FRONTEND_SOURCE=prebuilt`).
@@ -210,7 +212,7 @@ The frontend uses relative URLs, so one build works under any `BASE_PATH`. Chang
 ### Run locally (Docker Desktop)
 
 1. Start Docker Desktop.
-2. `.env` needs `APP_USER` and `APP_PASSWORD` (`copy .env.example .env`). Leave `COSTING_DOMAIN`/`VOICE_DOMAIN`/`BASE_PATH` unset for the defaults.
+2. `.env` needs `APP_USER` and `APP_PASSWORD` (`copy .env.example .env`). Leave `DOMAIN`/`BASE_PATH`/`SCM_PATH` unset for the defaults. Run `docker network create ai-proxy` once.
 3. **Office network only** (Fortinet SSL inspection, npm registry blocked):
    - Put the firewall's CA certificate in `certs/` as a `.crt` file (PEM), or builds fail with `CERTIFICATE_VERIFY_FAILED`. Export it from Windows (`certmgr.msc` → Trusted Root → the Fortinet `FG…` certificate → Export, Base-64). `certs/*.crt` is git-ignored.
    - Add `FRONTEND_SOURCE=prebuilt` to `.env` and build the frontend on the PC first: `cd frontend && npm run build` (this needs the existing `node_modules`).
@@ -220,7 +222,7 @@ The frontend uses relative URLs, so one build works under any `BASE_PATH`. Chang
    docker compose up -d --build
    docker compose ps                  # costing and nginx: Up
    ```
-5. Open http://localhost/costing/ or http://127.0.0.1:8000/costing/ (login prompt). Start voice_call too for http://scm.localhost/voicecall/. Chrome, Edge and Firefox resolve `*.localhost` to your own PC.
+5. Open http://localhost/costing/ or http://127.0.0.1:8000/costing/ (login prompt). Start voice_call too for http://localhost/scm/.
 
 ### Server deployment
 
@@ -228,7 +230,8 @@ See [Deploy on an Ubuntu server (Docker)](#deploy-on-an-ubuntu-server-docker) ab
 
 ### Changing a domain or base path later
 
-- **Domain:** edit `COSTING_DOMAIN` / `VOICE_DOMAIN` in `.env`, then run `docker compose up -d nginx`. If you change `VOICE_DOMAIN`, set the same value in voice_call's `.env` and restart its nginx too. Update DNS to match.
+- **Domain:** edit `DOMAIN` in `.env`, then run `docker compose up -d nginx`. Update DNS to match.
+- **voice_call path:** set `BASE_PATH` in voice_call and `SCM_PATH` here to the same value, then `docker compose up -d` in both projects.
 - **Base path:** edit `BASE_PATH` in `.env` and run `docker compose up -d`. That recreates the app and nginx; no rebuild is needed.
 
 No file edits are needed for either.
