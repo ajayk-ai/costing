@@ -31,6 +31,7 @@ export default function SapHistory({ runs, activeId, onView, onDeleted }) {
       rowActions={(r) => <>
         <IconButton icon="eye" label="Open result" onClick={() => onView(r.id)} />
         <a className="icon-btn" href={api.sapDownloadUrl(r.id)} aria-label="Download result .xlsx" title="Download result .xlsx"><Icon name="download" /></a>
+        {r.hasFull && <a className="icon-btn" href={api.sapDownloadFullUrl(r.id)} aria-label="Download full workbook" title="Download full workbook (all tabs)"><Icon name="sheet" /></a>}
       </>}
       onDelete={async (ids) => { await Promise.all(ids.map(api.deleteSapRun)); onDeleted(ids); }}
       onClear={async () => { await api.clearSapRuns(); onDeleted('all'); }} />

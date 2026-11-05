@@ -22,7 +22,7 @@ def delete_runs(run_id: int | None = None) -> list[str]:
 
 def list_runs(limit: int = 200):
     return [dict(r) for r in _conn.execute(
-        "SELECT id, file_name, rows, filled, unfilled, created_at FROM sap_runs ORDER BY id DESC LIMIT ?", (limit,))]
+        "SELECT id, file_name, rows, filled, unfilled, created_at, output FROM sap_runs ORDER BY id DESC LIMIT ?", (limit,))]
 
 
 def get_run(run_id: int):

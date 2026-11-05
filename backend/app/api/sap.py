@@ -10,6 +10,12 @@ from .deps import XLSX_MIME, read_upload
 router = APIRouter(prefix="/api/sap", tags=["sap"])
 
 
+def _with_full(run: dict) -> dict:
+    """Mark whether the full workbook exists, so the screen only offers it for runs that have one."""
+    run["hasFull"] = sap_runs.full_path(run) is not None
+    return run
+
+
 @router.post("/process")
 async def process_sap(file: UploadFile = File(...)):
     data = await read_upload(file)
@@ -17,12 +23,12 @@ async def process_sap(file: UploadFile = File(...)):
         run_id = await run_in_threadpool(sap_runs.process_and_store, data, file.filename or "")
     except ValueError as e:
         raise HTTPException(400, str(e))
-    return run_repo.get_run(run_id)
+    return _with_full(run_repo.get_run(run_id))
 
 
 @router.get("/runs")
 def list_runs():
-    return run_repo.list_runs()
+    return [_with_full(r) for r in run_repo.list_runs()]
 
 
 @router.get("/runs/{run_id}")
@@ -30,7 +36,7 @@ def get_run(run_id: int):
     r = run_repo.get_run(run_id)
     if not r:
         raise HTTPException(404, "Run not found")
-    return r
+    return _with_full(r)
 
 
 @router.delete("/runs")
@@ -56,3 +62,14 @@ def download_run(run_id: int):
     if not f:
         raise HTTPException(404, "Processed file not found")
     return FileResponse(f, media_type=XLSX_MIME, filename=r["output"])
+
+
+@router.get("/runs/{run_id}/download-full")
+def download_full(run_id: int):
+    r = run_repo.get_run(run_id)
+    if not r:
+        raise HTTPException(404, "Run not found")
+    f = sap_runs.full_path(r)
+    if not f:
+        raise HTTPException(404, "This run has no full workbook. Process the SAP file again to create one.")
+    return FileResponse(f, media_type=XLSX_MIME, filename=f.name)

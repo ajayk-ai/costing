@@ -35,6 +35,7 @@ def col(key, label, *aliases):
 
 DESC = "Description Masters"
 D1 = "D1 Department Mapping"
+F1 = "F1 Mapping"
 
 MASTERS: dict[str, Master] = {m.type: m for m in [
     Master("material", "Material Description", DESC, re.compile(r"material\s*desc", re.I),
@@ -88,6 +89,16 @@ MASTERS: dict[str, Master] = {m.type: m for m in [
     Master("d1_emp_id", "D1 Emp ID", D1, re.compile(r"D1\s*emp\s*id", re.I),
            [col("emp_id", "EMP ID", "emp code", "employee id"),
             col("revised_dept", "REVISED DEPT.", "revised department", "department")]),
+
+    # F1: classify every line by its account (GL Nature) and by account description + department (Overhead).
+    Master("f1_gl_nature", "F1 GL Nature", F1, re.compile(r"F1\s*GL\s*nature", re.I),
+           [col("account", "Account", "account number", "account no", "gl account"),
+            col("account_desc", "Account Description", "account desc", "description"),
+            col("nature", "Nature"),  # Fixed / Variable
+            col("gl_nature", "GL nature", "gl nature")], keyed=True),
+    Master("f1_overhead", "F1 Overhead", F1, re.compile(r"F1\s*overhead", re.I),
+           [col("gl_department", "GL + Department", "gl department", "gl and department", "key"),
+            col("overhead", "Overhead")], keyed=True),
 ]}
 
 
